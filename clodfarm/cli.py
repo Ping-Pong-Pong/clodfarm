@@ -1611,7 +1611,7 @@ def cmd_x(cfg, a):
     except ValueError as e:
         print(f"clodfarm x: {e}", file=sys.stderr)
         return 1
-    print(json.dumps(r, indent=1))
+    print(json.dumps(r, indent=1, ensure_ascii=False))
     return 0
 
 
