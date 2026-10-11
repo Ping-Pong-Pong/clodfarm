@@ -8,6 +8,7 @@ Accounts the farm connects once, for every Claude on it. The **CONNECTORS** butt
 | **Stripe** | Every Claude can use the farm's Stripe account: customers, products, prices, payment links, invoices, subscriptions, balances, and Stripe's docs. |
 | **Blender** | Every Claude can drive a Blender that runs on another machine, through its MCP server: scenes, game assets, materials, animation, renders, import and export, Python. |
 | **Google Ads** | Every Claude can see the farm's ad accounts, run reports (GAQL), keep live dashboards of them, and make changes when its person asks. |
+| **X** | Every Claude can read the farm's X account, its mentions and X search, and post, reply and quote as it when its person asks. |
 
 ## Stripe
 
@@ -103,6 +104,52 @@ version first), and lists them.
 
 Anyone with these credentials can do what the signed-in Google user can do in those ad accounts. Use a Google user
 with only the access the Claudes need (Google Ads → Access and security → a *Standard* or *Read only* role).
+
+## X
+
+X (Twitter), through X's own API v2 and the farm's developer account. The farm signs each call itself
+(OAuth 1.0a), so no token expires and no one has to sign in from a browser.
+
+| Field | Where it comes from |
+|---|---|
+| **API key + API key secret** | [console.x.com](https://console.x.com) → your app → Keys and tokens → *API Key and Secret* (the consumer keys). |
+| **Access token + secret** | The same page → *Access Token and Secret* → Generate. They act as the X account that owns the app. First set the app's **User authentication settings** to *Read and write* (*and Direct message* for DMs). A token keeps the permissions it was made with, so regenerate it after you change them. |
+| **Bearer token** (optional) | The same page. For app-only calls (`clodfarm x api … --app`), which don't act as the account. |
+
+X bills API calls on pay-per-use: add credits (or a spending limit) to the developer account first, or every call
+answers HTTP 402.
+
+The farm manager connects it: **CONNECTORS → X**, paste the fields, **CONNECT**. The panel then shows the account
+(@name, followers), the access level X reports for the token, and the API key's last 4 characters. Or from the box's
+shell:
+
+```bash
+clodfarm x connect                 # asks for each field (the secrets aren't echoed)
+clodfarm x connect < keys.json     # or: {"api_key": ..., "api_secret": ..., "access_token": ...,
+                                   #      "access_token_secret": ..., "bearer_token": ...}   (bearer optional)
+clodfarm x                         # status
+clodfarm x disconnect
+```
+
+- **How the Claudes use it.** The keys go in `/workspace/.farm/connectors/x.json` (readable by the farm's user only).
+  Every Claude's farm guide teaches `clodfarm x`:
+  - `clodfarm x me`, `clodfarm x user NAME`, `clodfarm x posts [NAME] [-n 10]`, `clodfarm x mentions`,
+    `clodfarm x search "QUERY" [-n 10]` (recent search: the last 7 days), `clodfarm x get ID`: JSON, as X returns it;
+  - `clodfarm x post "TEXT" [--reply-to ID] [--quote ID] [--media FILE ...]`: posts as the account (up to 4 JPEG, PNG,
+    WebP or GIF images, uploaded with `POST /2/media/upload`); `clodfarm x delete ID` deletes one of its posts. A
+    post's link works wherever an ID does;
+  - `clodfarm x api METHOD /2/PATH [--body JSON] [--query K=V ...]`: any other X API v2 call, signed as the account
+    (likes, reposts, follows, bookmarks, lists, DMs); `--app` sends it with the bearer token instead.
+
+  Posting, liking, following and DMs are public and done as the account, so the guide says to do them only when the
+  Claude's person asks for that one thing, and to answer with the post's link. Reads are billed per post too, so it
+  asks for few results.
+- **A read-only token.** If X says the token is read only, the card says so and posting answers X's own refusal. Set
+  the app to *Read and write*, regenerate the access token, and **REPLACE** the keys.
+- **Disconnect** removes the file. To cut access for good, regenerate the keys in the developer console too.
+
+Anyone with these keys can post as the account. The Claudes share one container: a Claude with a shell could read
+them. Connect an account you're happy for any of the farm's Claudes to post as.
 
 ## MCP servers from the farm's host
 

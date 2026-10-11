@@ -367,3 +367,107 @@ def test_the_manager_connects_google_ads_from_a_shell_and_a_live_dashboard_uses_
     assert out["ok"], out["error"]
     assert dashboards.get(farm_ui.store, "ads")["title"] == "Google Ads · Jestr Shop" and d
     assert run("disconnect").returncode == 0 and not connectors.gads_load(farm_ui.cfg.workspace)
+
+
+# ------------------------------------------------------------------------- X
+@pytest.fixture
+def xapi(monkeypatch):
+    import fake_x
+    fake_x.POSTS.clear()
+    fake_x.MEDIA.clear()
+    srv = fake_x.serve()
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setenv("FARM_X_API", f"http://127.0.0.1:{srv.server_address[1]}")
+    yield fake_x
+    srv.shutdown()
+
+
+def test_oauth1_signs_as_x_documents_it():
+    keys = {"api_key": "xvz1evFS4wEEPTGEFPHBog", "api_secret": "kAcSOqF21Fu85e7zjz7ZN2U4ZRhfV3WpwPAoE3Z7kBw",
+            "access_token": "370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb",
+            "access_token_secret": "LswwdoUaIvS8ltyTt5jkRh4J50vUPVVHtR2YPi5kE"}
+    h = connectors.x_oauth1("POST", "https://api.twitter.com/1.1/statuses/update.json?include_entities=true", keys,
+                            {"status": "Hello Ladies + Gentlemen, a signed OAuth request!"},
+                            nonce="kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg", stamp="1318622958")
+    assert 'oauth_signature="hCtSmYh%2BiHYCEqBWrE7C7hYmtUk%3D"' in h  # X's "Creating a signature" example
+
+
+def test_the_manager_connects_x_and_every_claude_gets_it(ui, xapi):
+    base, farm_ui = ui
+    gil = farm_ui.manager.create("gil", start=False)
+    manager, person = client(), client()
+    login(manager, base)
+    login(person, base, claude=gil["id"])
+    assert person(base + "/api/connectors")[1]["x"] == {"connected": False}
+    assert person(base + "/api/connectors/x", xapi.KEYS)[0] == 403
+    code, body, _ = manager(base + "/api/connectors/x", xapi.KEYS)
+    assert code == 200, body
+    x = body["x"]
+    assert x["connected"] and x["user"]["username"] == "jestrfarm" and x["access"] == "read-write"
+    assert x["api_key_last4"] == "farm" and x["bearer"] and "secret" not in json.dumps(body)
+    assert oct(os.stat(connectors._x_path(farm_ui.cfg.workspace)).st_mode & 0o777) == "0o600"
+    guide = open(os.path.join(gil["config_dir"], "CLAUDE.md")).read()
+    assert "## X (a connector)" in guide and "@jestrfarm" in guide
+    seen = person(base + "/api/connectors")[1]["x"]
+    assert seen["connected"] and seen["user"]["username"] == "jestrfarm" and "api_key_last4" not in seen
+    assert manager(base + "/api/connectors/x/disconnect", {})[1]["x"] == {"connected": False}
+    assert not os.path.exists(connectors._x_path(farm_ui.cfg.workspace))
+    assert "## X (a connector)" not in open(os.path.join(gil["config_dir"], "CLAUDE.md")).read()
+
+
+def test_x_keys_that_dont_work_are_refused(ui, xapi):
+    base, _ = ui
+    manager = client()
+    login(manager, base)
+    for bad, says in (({"api_secret": "wrong"}, "Unauthorized"), ({"access_token_secret": ""}, "missing: access token secret"),
+                      ({"api_key": "someone-else"}, "HTTP 401")):
+        code, body, _ = manager(base + "/api/connectors/x", {**xapi.KEYS, **bad})
+        assert code == 400 and says in body["error"], (bad, body)
+
+
+def test_a_read_only_token_says_so(ui, xapi, tmp_path):
+    _, farm_ui = ui
+    v = connectors.x_connect(farm_ui.cfg.workspace, xapi.RO)
+    assert v["access"] == "read" and "(read only)" in connectors.x_guide(farm_ui.cfg.workspace)
+    with pytest.raises(ValueError, match="oauth1 app permissions"):
+        connectors.x_post(farm_ui.cfg.workspace, "hello")
+
+
+def test_the_x_cli(ui, xapi, env, tmp_path):
+    import subprocess
+    import sys
+    _, farm_ui = ui
+    shell = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "FARM_TASK_ID")}
+    claude = {**os.environ, "CLAUDECODE": "1"}
+    run = lambda *a, stdin=None, env=claude: subprocess.run(  # noqa
+        [sys.executable, "-m", "clodfarm", "x", *a], input=stdin, capture_output=True, text=True, env=env)
+    assert run("me").returncode == 1 and "not connected" in run("me").stderr
+    assert run("connect", stdin=json.dumps(xapi.KEYS)).returncode == 2, "a Claude doesn't connect it"
+    r = run("connect", stdin=json.dumps({**xapi.KEYS, "api_secret": "nope"}), env=shell)
+    assert r.returncode == 1 and "Unauthorized" in r.stderr
+    r = run("connect", stdin=json.dumps(xapi.KEYS), env=shell)
+    assert r.returncode == 0 and "@jestrfarm" in r.stdout and "secret" not in r.stdout, r.stderr
+    assert "connected as @jestrfarm (Jestr Farm), read-write" in run().stdout
+    assert json.loads(run("me").stdout)["data"]["username"] == "jestrfarm"
+    png = tmp_path / "cat.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
+    r = run("post", "hello from the farm", "--media", str(png))
+    assert r.returncode == 0, r.stderr
+    p = json.loads(r.stdout)
+    assert p["url"] == f"https://x.com/jestrfarm/status/{p['id']}" and xapi.POSTS[p["id"]]["media"]["media_ids"] == ["1900000000"]
+    assert xapi.MEDIA[0]["category"] == b"tweet_image"
+    r = run("post", "a reply", "--reply-to", f"https://x.com/jestrfarm/status/{p['id']}?s=20")
+    assert xapi.POSTS[json.loads(r.stdout)["id"]]["reply"] == {"in_reply_to_tweet_id": p["id"]}
+    assert "duplicate content" in run("post", "a reply").stderr
+    assert json.loads(run("get", p["id"]).stdout)["data"]["text"] == "hello from the farm"
+    assert json.loads(run("search", "FARM").stdout)["meta"]["result_count"] == 1
+    assert len(json.loads(run("posts", "-n", "1").stdout)["data"]) == 2, "X's least is 5: -n 1 asks for 5"
+    assert json.loads(run("user", "@someone").stdout)["data"]["username"] == "someone"
+    r = run("api", "POST", "/2/users/1600000000/likes", "--body", json.dumps({"tweet_id": p["id"]}))
+    assert json.loads(r.stdout)["data"]["liked"]
+    assert json.loads(run("api", "GET", f"/2/tweets/{p['id']}", "--app").stdout)["data"]["text"] == "hello from the farm"
+    assert json.loads(run("delete", p["id"]).stdout)["data"]["deleted"] and p["id"] not in xapi.POSTS
+    assert run("post").returncode == 2
+    (tmp_path / "notes.txt").write_text("hi")
+    assert "takes JPEG" in run("post", "x", "--media", str(tmp_path / "notes.txt")).stderr
+    assert run("disconnect", env=shell).returncode == 0 and not connectors.x_load(farm_ui.cfg.workspace)

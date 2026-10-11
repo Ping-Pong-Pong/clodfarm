@@ -1565,6 +1565,95 @@ def _gads_connect(cfg, a):
     return 0
 
 
+def cmd_x(cfg, a):
+    """X for the Claudes: the account, its posts and mentions, search, posting, and any other API v2 call, signed as the
+    farm's X account."""
+    from . import connectors
+    if a.action in ("connect", "disconnect"):
+        return _x_connect(cfg, a)
+    d = connectors.x_load(cfg.workspace)
+    if a.action == "status" or not d:
+        v = connectors.x_view(cfg.workspace)
+        if not v["connected"]:
+            print("X: not connected (the farm manager connects it in the farm UI's CONNECTORS)",
+                  file=sys.stdout if a.action == "status" else sys.stderr)
+            return 0 if a.action == "status" else 1
+        u = v.get("user") or {}
+        return _out(v, a.json, f"X: connected as @{u.get('username')}" + (f" ({u.get('name')})" if u.get("name") else "")
+                    + (f", {v['access']}" if v.get("access") else "") + f", API key …{v['api_key_last4']}"
+                    + ("" if v.get("bearer") else ", no bearer token")) or 0
+    args = list(a.args or [])
+    need = {"user": "NAME", "search": '"QUERY"', "get": "ID", "post": '"TEXT"', "delete": "ID", "api": "METHOD /2/PATH"}
+    if a.action in need and len(args) < (2 if a.action == "api" else 1):
+        print(f"usage: clodfarm x {a.action} {need[a.action]}", file=sys.stderr)
+        return 2
+    try:
+        if a.action == "me":
+            r = connectors.x_user(cfg.workspace)
+        elif a.action == "user":
+            r = connectors.x_user(cfg.workspace, args[0])
+        elif a.action in ("posts", "mentions"):
+            r = connectors.x_posts(cfg.workspace, args[0] if args else "", a.action == "mentions", a.n)
+        elif a.action == "search":
+            r = connectors.x_search(cfg.workspace, " ".join(args), a.n)
+        elif a.action == "get":
+            r = connectors.x_call(d, "GET", f"/2/tweets/{connectors._x_id(args[0])}",
+                                  {"tweet.fields": connectors.X_POST_FIELDS, "expansions": "author_id"})
+        elif a.action == "post":
+            r = connectors.x_post(cfg.workspace, " ".join(args), a.reply_to, a.quote, a.media)
+            _store(cfg).event("connector.x", f"posted on X as @{(d.get('user') or {}).get('username')}: {r['url']}",
+                              by="cli")
+        elif a.action == "delete":
+            r = connectors.x_call(d, "DELETE", f"/2/tweets/{connectors._x_id(args[0])}")
+        else:  # api METHOD PATH
+            body = json.loads(a.json_body) if a.json_body else None
+            r = connectors.x_call(d, args[0].upper(), args[1], dict(q.split("=", 1) for q in a.query), body, app=a.app)
+    except ValueError as e:
+        print(f"clodfarm x: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(r, indent=1))
+    return 0
+
+
+def _x_connect(cfg, a):
+    """The farm manager connects X from the box's shell: the keys as JSON on stdin (so they stay out of the shell
+    history), or asked for one by one."""
+    from . import connectors
+    from .agents import AgentManager
+    if _in_claude():
+        print("clodfarm x: the farm manager connects X, from the box's shell", file=sys.stderr)
+        return 2
+    if a.action == "disconnect":
+        if connectors.x_disconnect(cfg.workspace):
+            AgentManager(cfg).share_connectors()
+            _store(cfg).event("connector.x", "X disconnected from a shell", by="cli")
+        print("X: not connected")
+        return 0
+    if sys.stdin.isatty():
+        import getpass
+        creds = {"api_key": input("API key (consumer key): "), "api_secret": getpass.getpass("API key secret: "),
+                 "access_token": input("Access token: "), "access_token_secret": getpass.getpass("Access token secret: "),
+                 "bearer_token": getpass.getpass("Bearer token (Enter for none): ")}
+    else:
+        try:
+            creds = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            print('clodfarm x connect: give the keys as JSON on stdin: {"api_key": ..., "api_secret": ..., '
+                  '"access_token": ..., "access_token_secret": ..., "bearer_token": ... (optional)}', file=sys.stderr)
+            return 2
+    try:
+        v = connectors.x_connect(cfg.workspace, creds if isinstance(creds, dict) else {}, by="cli")
+    except ValueError as e:
+        print(f"clodfarm x: {e}", file=sys.stderr)
+        return 1
+    AgentManager(cfg).share_connectors()
+    u = v.get("user") or {}
+    _store(cfg).event("connector.x", f"X connected as @{u.get('username')} from a shell", by="cli")
+    print(f"X: connected as @{u.get('username')}" + (f" ({u.get('name')})" if u.get("name") else "")
+          + (f", {v['access']}" if v.get("access") else ""))
+    return 0
+
+
 def cmd_upgrade(cfg, a):
     from . import upgrade
     return upgrade.main(cfg, a)
@@ -1869,6 +1958,19 @@ def main(argv=None):
     gd.add_argument("gaql", nargs="?", default="")
     gd.add_argument("--customer", default="")
     gd.add_argument("--refresh", action="store_true")
+    xx = add("x", cmd_x, "X (Twitter): status | me | user NAME | posts [NAME] | mentions | search QUERY | get ID | "
+             "post TEXT [--reply-to ID] [--quote ID] [--media FILE..] | delete ID | api METHOD PATH [--body JSON] | "
+             "connect (JSON on stdin) | disconnect")
+    xx.add_argument("action", nargs="?", default="status", choices=[
+        "status", "me", "user", "posts", "mentions", "search", "get", "post", "delete", "api", "connect", "disconnect"])
+    xx.add_argument("args", nargs="*")
+    xx.add_argument("-n", type=int, default=10, help="how many posts (X bills each one)")
+    xx.add_argument("--reply-to", default="")
+    xx.add_argument("--quote", default="")
+    xx.add_argument("--media", nargs="+", default=[], metavar="FILE")
+    xx.add_argument("--body", dest="json_body", default="", metavar="JSON", help="api: the JSON body")
+    xx.add_argument("--query", nargs="+", default=[], metavar="K=V", help="api: query parameters")
+    xx.add_argument("--app", action="store_true", help="api: as the app (its bearer token), not as the account")
     stp = add("stripe", cmd_stripe, "the Stripe connector: status | connect (key on stdin) | disconnect")
     stp.add_argument("action", nargs="?", default="status", choices=["status", "connect", "disconnect"])
     bl = add("blender", cmd_blender, "the Blender connector: status | connect URL (token on stdin) | disconnect")

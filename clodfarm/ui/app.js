@@ -2394,23 +2394,23 @@ const UI = {
     const home = R.manager ? $("#grp-run") : $("#grp-farm");
     if (b.parentElement !== home) { if (R.manager) home.insertBefore(b, $("#manager-tool")); else home.append(b); }
     const slack = st.slack?.state, bad = slack === "error";
-    const n = (slack === "live" ? 1 : 0) + (st.connectors?.stripe ? 1 : 0) + (st.connectors?.blender ? 1 : 0) + (st.connectors?.google_ads ? 1 : 0);
+    const n = (slack === "live" ? 1 : 0) + (st.connectors?.stripe ? 1 : 0) + (st.connectors?.blender ? 1 : 0) + (st.connectors?.google_ads ? 1 : 0) + (st.connectors?.x ? 1 : 0);
     const badge = $("#conn-badge");
     badge.hidden = !n && !bad;
     badge.textContent = n ? String(n) : "!";
     badge.classList.toggle("bad", !n && bad);
-    b.dataset.desc = R.manager ? "Plug the farm into Slack, Stripe, Blender and Google Ads" : "What the farm is plugged into";
-    b.dataset.help = (R.manager ? "Plug the farm in: Slack gives it work, Stripe, Blender and Google Ads go to every Claude." : "What the farm is plugged into: Slack, Stripe, Blender, Google Ads.")
+    b.dataset.desc = R.manager ? "Plug the farm into Slack, Stripe, Blender, Google Ads and X" : "What the farm is plugged into";
+    b.dataset.help = (R.manager ? "Plug the farm in: Slack gives it work, Stripe, Blender, Google Ads and X go to every Claude." : "What the farm is plugged into: Slack, Stripe, Blender, Google Ads, X.")
       + " The green number: how many are on.";
     b.dataset.tip = n ? `Connectors · ${n} on` : bad ? "Connectors · Slack needs a look" : "Connectors";
-    b.setAttribute("aria-label", `Connectors: Slack, Stripe, Blender and Google Ads, ${n ? n + " connected" : bad ? "Slack needs a look" : "none connected"} (S)`);
+    b.setAttribute("aria-label", `Connectors: Slack, Stripe, Blender, Google Ads and X, ${n ? n + " connected" : bad ? "Slack needs a look" : "none connected"} (S)`);
     if ($("#dlg-conn-menu").open) this.renderConnMenu();
   },
   async loadConnectors() {
     try { this.conn = await api("api/connectors"); } catch { /* keep what we had: the menu still shows /api/state's view */ }
     return this.conn;
   },
-  /** Slack, Stripe and Google Ads as the menu shows them: [pill class, pill text]. /api/state is fresh every poll; api/connectors
+  /** Slack, Stripe, Blender, Google Ads and X as the menu shows them: [pill class, pill text]. /api/state is fresh every poll; api/connectors
    * adds the details (Stripe's mode and account), used while it agrees with the state. */
   connView() {
     const st = App.state || {}, c = this.conn || {}, sl = st.slack || c.slack || {};
@@ -2426,7 +2426,9 @@ const UI = {
     const gon = !!st.connectors?.google_ads, ga = c.google_ads && !!c.google_ads.connected === gon ? c.google_ads : { connected: gon };
     const nAds = (ga.customers || []).filter(x => !x.manager).length;
     const gads = !ga.connected ? ["off", "NOT CONNECTED"] : ["on", ga.customers ? `CONNECTED · ${nAds} AD ACCOUNT${nAds === 1 ? "" : "S"}` : "CONNECTED"];
-    return { slack: { pill: slack, ...sl }, stripe: { pill: stripe, ...sp }, blender: { pill: blender, ...bl }, gads: { pill: gads, ...ga } };
+    const xon = !!st.connectors?.x, xa = c.x && !!c.x.connected === xon ? c.x : { connected: xon };
+    const x = !xa.connected ? ["off", "NOT CONNECTED"] : ["on", xa.user?.username ? `CONNECTED · @${String(xa.user.username).toUpperCase()}` : "CONNECTED"];
+    return { slack: { pill: slack, ...sl }, stripe: { pill: stripe, ...sp }, blender: { pill: blender, ...bl }, gads: { pill: gads, ...ga }, x: { pill: x, ...xa } };
   },
   openConnMenu() {
     const d = $("#dlg-conn-menu");
@@ -2453,7 +2455,7 @@ const UI = {
   },
   renderConnMenu() {
     const R = role(), v = this.connView(), list = $("#connm-list");
-    const sig = JSON.stringify([R.manager, v.slack.pill, v.stripe.pill, v.blender.pill, v.gads.pill]);
+    const sig = JSON.stringify([R.manager, v.slack.pill, v.stripe.pill, v.blender.pill, v.gads.pill, v.x.pill]);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const at = [...list.children].indexOf(document.activeElement);
@@ -2467,7 +2469,8 @@ const UI = {
       row("slack", "slack.svg", "SLACK", "Give the farm work from Slack", v.slack.pill, () => R.manager ? this.openSlack() : this.openConnector("slack")),
       row("stripe", "stripe.svg", "STRIPE", "Every Claude can use your Stripe account", v.stripe.pill, () => this.openConnector("stripe")),
       row("blender", "blender.svg", "BLENDER", "Every Claude can drive a Blender on another machine", v.blender.pill, () => this.openConnector("blender")),
-      row("gads", "google-ads.svg", "GOOGLE ADS", "Reports and live dashboards of your ad accounts", v.gads.pill, () => this.openConnector("gads")));
+      row("gads", "google-ads.svg", "GOOGLE ADS", "Reports and live dashboards of your ad accounts", v.gads.pill, () => this.openConnector("gads")),
+      row("x", "x-logo.svg", "X", "Every Claude can read and post on your X account", v.x.pill, () => this.openConnector("x")));
     if (at >= 0) list.children[at]?.focus({ preventScroll: true });
     $("#connm-foot").textContent = R.manager ? "MORE CONNECTORS COMING" : "THE FARM'S MANAGER CONNECTS THESE";
   },
@@ -2483,9 +2486,9 @@ const UI = {
   /** A connector's panel: Stripe (the manager connects it; people see how it stands), or Slack for a person. */
   async openConnector(id) {
     for (const x of $$("dialog[open]")) x.close();
-    this.connPanel = id; this.stripeReplace = false; this.gadsReplace = false; this.blenderReplace = false;
-    $("#connector-logo").src = { slack: "slack.svg", gads: "google-ads.svg", blender: "blender.svg" }[id] || "stripe.svg";
-    $("#connector-h").textContent = { slack: "SLACK", gads: "GOOGLE ADS", blender: "BLENDER" }[id] || "STRIPE";
+    this.connPanel = id; this.stripeReplace = false; this.gadsReplace = false; this.blenderReplace = false; this.xReplace = false;
+    $("#connector-logo").src = { slack: "slack.svg", gads: "google-ads.svg", blender: "blender.svg", x: "x-logo.svg" }[id] || "stripe.svg";
+    $("#connector-h").textContent = { slack: "SLACK", gads: "GOOGLE ADS", blender: "BLENDER", x: "X" }[id] || "STRIPE";
     const body = $("#connector-body");
     body.dataset.key = "";
     if (this.conn) this.renderConnector(); else fill(body, h("p", { class: "muted", text: "Loading…" }));
@@ -2500,6 +2503,7 @@ const UI = {
     if (this.connPanel === "slack") return this.renderSlackInfo();
     if (this.connPanel === "gads") return this.renderGads();
     if (this.connPanel === "blender") return this.renderBlender();
+    if (this.connPanel === "x") return this.renderX();
     return this.renderStripe();
   },
   pill([cls, text]) { return h("span", { class: `pill pill-${cls}` }, h("i", { "aria-hidden": "true" }), h("span", { text })); },
@@ -2857,6 +2861,125 @@ const UI = {
         const n = (r.google_ads?.customers || []).length;
         this.say(`Google Ads is connected: ${n} account${n === 1 ? "" : "s"}. Every Claude can use it now.`);
         this.renderGads(); this.refresh();
+        $("#dlg-connector").scrollTop = 0;
+      } catch (x) {
+        form.dataset.busy = ""; for (const i of Object.values(inputs)) i.readOnly = false;
+        go.textContent = "▶ CONNECT"; check(); hint.textContent = ""; hint.className = "key-hint"; err.textContent = x.message;
+        err.scrollIntoView({ block: "center" });
+      }
+    });
+    check();
+    return form;
+  },
+
+  /** X: the manager connects the farm's developer app (its API key and an access token for the account the Claudes
+   * act as, OAuth 1.0a); every Claude reads and, when its person asks, posts with `clodfarm x`. */
+  renderX() {
+    const c = this.conn || {}, x = c.x || { connected: false }, manage = !!c.manage, body = $("#connector-body");
+    const key = JSON.stringify([x, manage, this.xReplace]);
+    if (body.dataset.key === key) return;
+    body.dataset.key = key;
+    const lede = h("p", { class: "conn-lede" }, "Every Claude on the farm can use your X account through the X API: read posts, mentions and search, and ",
+      h("b", { text: "post, reply and quote" }), ". ", h("b", { text: "They post only when their person asks." }),
+      " X bills each call to your developer account.");
+    const can = h("div", { class: "tool-chips conn-can" }, ["Post & reply", "Images", "Mentions", "Search", "Profiles", "Any API v2 call"]
+      .map(t => h("span", { class: "tool-chip", text: t })));
+    if (!x.connected) {
+      if (!manage) return fill(body, lede, can,
+        h("p", { class: "banner-note" }, h("strong", { text: "NOT CONNECTED. " }), "Ask the farm's manager to connect X: then your Claude can use it too."));
+      return fill(body, lede, can, this.xForm(true, null));
+    }
+    const u = x.user || {}, by = x.by ? String(x.by).replace(/^owner:/, "") : "";
+    const readOnly = x.access === "read";
+    const card = h("div", { class: "conn-card" },
+      h("div", { class: "conn-card-main" },
+        h("p", { class: "conn-card-top" }, this.pill(["on", "CONNECTED"]), x.access ? h("span", { class: "mode-chip" + (readOnly ? "" : " test"), text: x.access.toUpperCase() }) : null),
+        h("h3", { class: "conn-card-name", text: `@${u.username || "?"}` }),
+        h("p", { class: "muted small" }, [u.name, u.followers != null ? `${u.followers} followers` : ""].filter(Boolean).join(" · "))),
+      h("dl", { class: "stat-row conn-dl" },
+        manage && x.api_key_last4 ? [h("dt", { text: "KEYS" }), h("dd", { text: `API key ending …${x.api_key_last4}${x.bearer ? ", bearer token" : ""}` })] : null,
+        manage && x.at ? [h("dt", { text: "CONNECTED" }), h("dd", { text: `${nowS() - x.at < 20 ? "just now" : ago(x.at)}${by ? ` by ${by === "manager" ? "the manager" : by}` : ""}` })] : null,
+        h("dt", { text: "TOOLS" }), h("dd", {}, h("code", { class: "conn-code", text: "clodfarm x" }), " on every Claude")));
+    const note = readOnly ? h("p", { class: "banner-note" }, h("strong", { text: "READ ONLY. " }),
+      "This access token can't post. In the developer console, set the app's permissions to Read and write, regenerate the access token, and replace the keys.") : null;
+    const ask = [h("h3", { class: "kicker", text: "ASK YOUR CLAUDE" }),
+      h("ul", { class: "examples" },
+        h("li", { text: "“What are people saying about us on X this week?”" }),
+        h("li", { text: "“Draft a thread about the release, show me, then post it.”" }),
+        h("li", { text: "“Answer the questions in our mentions.”" }))];
+    if (!manage) return fill(body, card, note, ask);
+    if (this.xReplace) return fill(body, card, h("h3", { class: "kicker", text: "REPLACE THE KEYS" }),
+      this.xForm(false, () => { this.xReplace = false; this.renderX(); }));
+    const off = h("button", { class: "btn danger", type: "button" }, "DISCONNECT"), err = h("p", { class: "form-error", role: "alert" });
+    off.addEventListener("click", async () => {
+      if (off.dataset.sure !== "1") { off.dataset.sure = "1"; off.textContent = "SURE? THE CLAUDES LOSE X"; return; }
+      off.disabled = true; off.textContent = "DISCONNECTING…"; err.textContent = "";
+      try { this.conn = await api("api/connectors/x/disconnect", {}); this.say("X is disconnected."); this.renderX(); this.refresh(); }
+      catch (e) { err.textContent = e.message; off.disabled = false; off.dataset.sure = ""; off.textContent = "DISCONNECT"; }
+    });
+    const replace = h("button", { class: "btn", type: "button", onclick: () => { this.xReplace = true; this.renderX(); $("#connector-body input")?.focus(); } }, "REPLACE");
+    fill(body, card, note, ask, err, h("div", { class: "dlg-actions" }, replace, off));
+  },
+  /** The X app's keys: its API key and secret, an access token and secret for the account (Read and write), and the
+   *  bearer token if you have it. */
+  xForm(steps, onCancel) {
+    const F = [
+      ["api_key", "API KEY", false, "Consumer key"],
+      ["api_secret", "API KEY SECRET", true, "Consumer secret"],
+      ["access_token", "ACCESS TOKEN", false, "1234567890-…"],
+      ["access_token_secret", "ACCESS TOKEN SECRET", true, ""],
+      ["bearer_token", "BEARER TOKEN (OPTIONAL)", true, "AAAA…"]];
+    const err = h("p", { class: "form-error", role: "alert" });
+    const go = h("button", { class: "btn primary", type: "submit", disabled: true }, "▶ CONNECT");
+    const inputs = {};
+    const fields = F.map(([name, label, secret, ph]) => {
+      const input = inputs[name] = h("input", { name, id: `x-${name}`, type: secret ? "password" : "text", autocomplete: "off", spellcheck: "false",
+        autocapitalize: "off", maxlength: 300, placeholder: ph, "data-1p-ignore": "true", "data-lpignore": "true" });
+      const row = [input];
+      if (secret) {
+        const eye = h("button", { class: "btn tiny key-eye", type: "button", "aria-pressed": "false", "aria-label": `Show the ${label.toLowerCase()}`, text: "SHOW" });
+        eye.addEventListener("click", () => {
+          const show = input.type === "password";
+          input.type = show ? "text" : "password"; eye.textContent = show ? "HIDE" : "SHOW"; eye.setAttribute("aria-pressed", String(show)); input.focus();
+        });
+        row.push(eye);
+      }
+      return h("div", { class: "key-field" }, h("label", { for: `x-${name}`, text: label }), h("div", { class: "key-row" }, row));
+    });
+    const hint = h("p", { class: "key-hint", "aria-live": "polite" });
+    const form = h("form", { class: "stripe-form gads-form", autocomplete: "off" });
+    const check = () => {
+      const v = k => inputs[k].value.trim();
+      const missing = F.slice(0, 4).filter(([k]) => !v(k)).map(([, l]) => l.toLowerCase());
+      let text = missing.length ? `Still needed: ${missing.join(", ")}.` : "Looks complete: the farm checks it with X.", cls = missing.length ? "" : "ok";
+      if (v("access_token") && !/^\d+-/.test(v("access_token"))) { text = "An access token starts with the account's number and a dash (1234567890-…)."; cls = "bad"; }
+      hint.textContent = text; hint.className = "key-hint" + (cls ? " " + cls : "");
+      go.disabled = !!missing.length || cls === "bad" || form.dataset.busy === "1";
+    };
+    for (const i of Object.values(inputs)) i.addEventListener("input", () => { err.textContent = ""; check(); });
+    if (steps) form.append(h("ol", { class: "hatch-steps" },
+      h("li", {}, "In the X ", h("b", { text: "developer console" }), ", sign in as the account the Claudes should use, and create an ", h("b", { text: "app" }), ".",
+        h("span", { class: "muted small step-note", text: "X bills API calls per use: add credits (or a spending limit) to the developer account." }),
+        h("a", { class: "btn login-link key-link", href: "https://console.x.com", target: "_blank", rel: "noopener noreferrer" }, "OPEN THE CONSOLE ↗")),
+      h("li", {}, "In the app's ", h("b", { text: "user authentication settings" }), ", set the permissions to ", h("b", { text: "Read and write" }), ".",
+        h("span", { class: "muted small step-note", text: "Do this before you make the access token: a token keeps the permissions it was made with." })),
+      h("li", {}, "Under ", h("b", { text: "Keys and tokens" }), ", copy the ", h("b", { text: "API key and secret" }), " and generate an ", h("b", { text: "access token and secret" }), ".", ...fields, hint, err)));
+    else form.append(...fields, hint, err);
+    form.append(
+      h("p", { class: "muted small", text: "The farm checks them with X, then keeps them on its box. The secrets are never shown again." }),
+      h("div", { class: "dlg-actions save-bar" }, onCancel ? h("button", { class: "btn", type: "button", onclick: onCancel }, "CANCEL") : null, go));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (go.disabled) return;
+      form.dataset.busy = "1"; go.disabled = true; err.textContent = "";
+      for (const i of Object.values(inputs)) i.readOnly = true;
+      go.replaceChildren(h("span", { class: "spin", "aria-hidden": "true" }), "CHECKING WITH X…");
+      try {
+        const r = await api("api/connectors/x", Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()])));
+        for (const i of Object.values(inputs)) i.value = "";
+        this.conn = r; this.xReplace = false;
+        this.say(`X is connected as @${r.x?.user?.username}. Every Claude can use it now.`);
+        this.renderX(); this.refresh();
         $("#dlg-connector").scrollTop = 0;
       } catch (x) {
         form.dataset.busy = ""; for (const i of Object.values(inputs)) i.readOnly = false;
@@ -3767,7 +3890,7 @@ const UI = {
         link("WHITEBOARDS", null, "W", "whiteboard"),
         person ? link("DASHBOARDS", null, "D", "dashboards") : null,
         R.owner ? link("YOUR CLAUDE'S BROWSER", null, "B", "browser") : null,
-        person ? link("CONNECTORS: SLACK, STRIPE, GOOGLE ADS", "connectors", "S") : null,
+        person ? link("CONNECTORS: SLACK, STRIPE, GOOGLE ADS, X", "connectors", "S") : null,
         R.manager ? link("RUN THE FARM", "manager", "G") : null,
         link("SEE THE WHOLE FARM", "fit", "0")),
       h("p", { class: "muted small", text: "Drag to look round the farm, scroll or pinch to zoom." }));

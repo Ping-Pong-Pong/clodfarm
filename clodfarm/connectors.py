@@ -9,8 +9,13 @@ characters), and every Claude gets Stripe's own MCP server (https://mcp.stripe.c
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import mimetypes
 import os
+import secrets
 import re
 import time
 import urllib.error
@@ -251,7 +256,7 @@ Paths in its tools are on that server. Its own instructions say what it can do: 
 
 
 def guide_section(workspace: str) -> str:
-    """The farm guide's sections for what is connected (Stripe, Blender, Google Ads)."""
+    """The farm guide's sections for what is connected (Stripe, Blender, Google Ads, X)."""
     d = stripe_load(workspace)
     name = ((d or {}).get("account") or {}).get("name")
     stripe = GUIDE.format(mode=d.get("mode", "?").upper(), acct=f", {name}" if name else "") if d else ""
@@ -260,7 +265,7 @@ def guide_section(workspace: str) -> str:
     blender = BLENDER_GUIDE.format(server=f" ({title})" if title else "") if b else ""
     remote = "".join(f"\n## {name} (an MCP server of the farm's host)\nYour `mcp__{name}__*` tools reach it.\n"
                      + (v["guide"].strip() + "\n" if v["guide"] else "") for name, v in remote_mcp().items())
-    return stripe + blender + gads_guide(workspace) + remote
+    return stripe + blender + gads_guide(workspace) + x_guide(workspace) + remote
 
 
 # ------------------------------------------------------------------ Google Ads
@@ -531,3 +536,252 @@ def gads_dashboard(workspace: str, customer: str, days: int = 30) -> dict:
     return {"title": f"Google Ads · {name}",
             "description": f"Account {cid[:3]}-{cid[3:6]}-{cid[6:]}, {start} to {end}" + (f", in {cur}" if cur else ""),
             "widgets": widgets}
+
+
+# ------------------------------------------------------------------------- X
+# X (Twitter) through its own API v2, with the farm's developer account: the app's API key and secret plus an access
+# token and secret for the X account the Claudes act as (developer console → the app → Keys and tokens; OAuth 1.0a,
+# so nothing expires and nothing needs a browser), and the app's bearer token if there is one (app-only reads). The
+# farm signs every call itself (HMAC-SHA1), checks the keys with GET /2/users/me, keeps them in
+# .farm/connectors/x.json (the farm's user only), and every Claude uses them through `clodfarm x`. X bills each call
+# on pay-per-use, so the guide asks for small reads, and posts only when a person asks.
+X_FIELDS = ("api_key", "api_secret", "access_token", "access_token_secret")  # required; bearer_token is optional
+X_OPTIONAL = ("bearer_token",)
+X_USER_FIELDS = "username,name,verified,public_metrics,created_at,description"
+X_POST_FIELDS = "created_at,author_id,public_metrics,conversation_id,referenced_tweets"
+
+
+def _x_api() -> str:
+    return (os.environ.get("FARM_X_API") or "https://api.x.com").rstrip("/")  # a stand-in, in tests
+
+
+def _x_path(workspace: str) -> str:
+    return os.path.join(workspace, ".farm", "connectors", "x.json")
+
+
+def x_load(workspace: str) -> dict | None:
+    try:
+        with open(_x_path(workspace)) as f:
+            d = json.load(f)
+        return d if all(d.get(k) for k in X_FIELDS) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _pct(s) -> str:
+    return urllib.parse.quote(str(s), safe="~")
+
+
+def x_oauth1(method: str, url: str, creds: dict, params: dict | None = None, nonce: str = "",
+             stamp: str = "") -> str:
+    """The OAuth 1.0a Authorization header (HMAC-SHA1) for one call: ``params`` are the query string's and a form
+    body's (a JSON or multipart body isn't signed)."""
+    u = urllib.parse.urlsplit(url)
+    oauth = {"oauth_consumer_key": creds["api_key"], "oauth_nonce": nonce or secrets.token_hex(16),
+             "oauth_signature_method": "HMAC-SHA1", "oauth_timestamp": stamp or str(int(time.time())),
+             "oauth_token": creds["access_token"], "oauth_version": "1.0"}
+    pairs = urllib.parse.parse_qsl(u.query, keep_blank_values=True) + list((params or {}).items()) + list(oauth.items())
+    norm = "&".join(f"{k}={v}" for k, v in sorted((_pct(k), _pct(v)) for k, v in pairs))
+    base = "&".join((method.upper(), _pct(f"{u.scheme}://{u.netloc.lower()}{u.path}"), _pct(norm)))
+    key = f"{_pct(creds['api_secret'])}&{_pct(creds['access_token_secret'])}"
+    oauth["oauth_signature"] = base64.b64encode(hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()).decode()
+    return "OAuth " + ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(oauth.items()))
+
+
+def _x_error(code: int, body) -> str:
+    """X's own words for what went wrong (API v2 problem objects, or the older errors list)."""
+    if isinstance(body, dict):
+        for e in body.get("errors") or []:
+            if isinstance(e, dict) and (e.get("message") or e.get("detail")):
+                return str(e.get("message") or e.get("detail"))
+        for k in ("detail", "title", "error", "reason"):
+            if body.get(k):
+                return str(body[k])
+    return {401: "the keys aren't valid (regenerated, or mistyped)", 402: "the developer account is out of credits",
+            403: "X refused it", 429: "rate limited: try again later"}.get(code, f"HTTP {code}")
+
+
+def x_call(creds: dict, method: str, path: str, query: dict | None = None, body=None, app: bool = False,
+           timeout: float = 30, headers_out: dict | None = None) -> dict:
+    """One API call, signed as the connected X account (or with the bearer token, ``app=True``). ``body``: a dict
+    (sent as JSON) or (bytes, content type). Raises ValueError with X's reason."""
+    url = _x_api() + "/" + path.lstrip("/")
+    q = {k: str(v) for k, v in (query or {}).items() if v not in (None, "")}
+    if q:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(q, quote_via=urllib.parse.quote)
+    data, ctype = (body if isinstance(body, tuple) else
+                   (json.dumps(body).encode(), "application/json") if body is not None else (None, None))
+    if app:
+        if not creds.get("bearer_token"):
+            raise ValueError("this call needs the app's bearer token: the farm manager adds it in CONNECTORS → X")
+        auth = f"Bearer {creds['bearer_token']}"
+    else:
+        auth = x_oauth1(method, url, creds)
+    req = urllib.request.Request(url, data=data, method=method.upper(), headers={
+        "Authorization": auth, "User-Agent": "clodfarm", **({"Content-Type": ctype} if ctype else {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if headers_out is not None:
+                headers_out.update({k.lower(): v for k, v in r.headers.items()})
+            raw = r.read()
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read() or b"{}")
+        except ValueError:
+            err = {}
+        raise ValueError(f"X: {_x_error(e.code, err)} (HTTP {e.code})") from None
+    except (OSError, ValueError) as e:
+        raise ValueError(f"couldn't reach X ({e})") from None
+
+
+def x_check(creds: dict) -> dict:
+    """Who these keys act as (GET /2/users/me) and what the access token may do. Raises ValueError."""
+    creds = {k: str(creds.get(k) or "").strip() for k in (*X_FIELDS, *X_OPTIONAL)}
+    missing = [k.replace("_", " ") for k in X_FIELDS if not creds[k]]
+    if missing:
+        raise ValueError("missing: " + ", ".join(missing) + " (developer console → your app → Keys and tokens)")
+    hdrs: dict = {}
+    me = (x_call(creds, "GET", "/2/users/me", {"user.fields": X_USER_FIELDS}, headers_out=hdrs).get("data") or {})
+    if not me.get("id"):
+        raise ValueError("X answered, but not with the account these keys act as")
+    m = me.get("public_metrics") or {}
+    return {"user": {"id": me["id"], "username": me.get("username"), "name": me.get("name"),
+                     "verified": bool(me.get("verified")), "followers": m.get("followers_count")},
+            "access": hdrs.get("x-access-level") or None}  # "read", "read-write" or "read-write-directmessages"
+
+
+def x_connect(workspace: str, creds: dict, by: str = "") -> dict:
+    info = x_check(creds)
+    path = _x_path(workspace)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    data = {**{k: str(creds.get(k) or "").strip() for k in (*X_FIELDS, *X_OPTIONAL)}, **info, "by": by,
+            "at": time.time()}
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+    os.replace(path + ".tmp", path)
+    return x_view(workspace)
+
+
+def x_view(workspace: str) -> dict:
+    """What the UI and CLI show: never the keys, only the API key's last 4 characters."""
+    d = x_load(workspace)
+    if not d:
+        return {"connected": False}
+    return {"connected": True, "user": d.get("user") or {}, "access": d.get("access"),
+            "bearer": bool(d.get("bearer_token")), "api_key_last4": d["api_key"][-4:], "by": d.get("by"),
+            "at": d.get("at"), "tools": "clodfarm x"}
+
+
+def x_disconnect(workspace: str) -> bool:
+    try:
+        os.remove(_x_path(workspace))
+        return True
+    except OSError:
+        return False
+
+
+def _x_creds(workspace: str) -> dict:
+    d = x_load(workspace)
+    if not d:
+        raise ValueError("X isn't connected (the farm UI's CONNECTORS)")
+    return d
+
+
+def x_upload(workspace: str, path: str) -> str:
+    """Upload an image or a GIF for a post (POST /2/media/upload, in one request): its media ID."""
+    creds = _x_creds(workspace)
+    size = os.path.getsize(path)
+    kind = mimetypes.guess_type(path)[0] or ""
+    if kind not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+        raise ValueError(f"{os.path.basename(path)}: `clodfarm x post --media` takes JPEG, PNG, WebP and GIF images")
+    cat = "tweet_gif" if kind == "image/gif" else "tweet_image"
+    if size > (15 if cat == "tweet_gif" else 5) * 2**20:
+        raise ValueError(f"{os.path.basename(path)} is too big for X ({size / 2**20:.1f} MB)")
+    with open(path, "rb") as f:
+        raw = f.read()
+    boundary = "clodfarm" + secrets.token_hex(12)
+    parts = [(f'--{boundary}\r\nContent-Disposition: form-data; name="media_category"\r\n\r\n{cat}\r\n').encode(),
+             (f'--{boundary}\r\nContent-Disposition: form-data; name="media"; filename="{os.path.basename(path)}"'
+              f'\r\nContent-Type: {kind}\r\n\r\n').encode() + raw + b"\r\n", f"--{boundary}--\r\n".encode()]
+    r = x_call(creds, "POST", "/2/media/upload", body=(b"".join(parts), f"multipart/form-data; boundary={boundary}"),
+               timeout=300)
+    mid = (r.get("data") or {}).get("id") or r.get("media_id_string")
+    if not mid:
+        raise ValueError(f"X didn't take {os.path.basename(path)}")
+    return str(mid)
+
+
+def x_post(workspace: str, text: str, reply_to: str = "", quote: str = "", media: list[str] | None = None) -> dict:
+    """Post as the connected account (a reply, a quote, with up to 4 images): {id, text, url}."""
+    creds = _x_creds(workspace)
+    body: dict = {"text": text}
+    if reply_to:
+        body["reply"] = {"in_reply_to_tweet_id": _x_id(reply_to)}
+    if quote:
+        body["quote_tweet_id"] = _x_id(quote)
+    if media:
+        body["media"] = {"media_ids": [x_upload(workspace, p) for p in media[:4]]}
+    d = x_call(creds, "POST", "/2/tweets", body=body).get("data") or {}
+    user = (creds.get("user") or {}).get("username") or "i"
+    return {"id": d.get("id"), "text": d.get("text"), "url": f"https://x.com/{user}/status/{d.get('id')}"}
+
+
+def _x_id(v: str) -> str:
+    """A post's ID, from the ID or its link."""
+    v = str(v or "").strip()
+    m = re.fullmatch(r"\d{1,25}", v) or re.search(r"/status(?:es)?/(\d{1,25})", v)
+    if not m:
+        raise ValueError(f"not a post ID or link: {v!r}")
+    return m.group(m.lastindex or 0)
+
+
+def x_user(workspace: str, username: str = "") -> dict:
+    creds = _x_creds(workspace)
+    if not username:
+        return x_call(creds, "GET", "/2/users/me", {"user.fields": X_USER_FIELDS})
+    return x_call(creds, "GET", f"/2/users/by/username/{urllib.parse.quote(username.lstrip('@'))}",
+                  {"user.fields": X_USER_FIELDS})
+
+
+def x_posts(workspace: str, username: str = "", mentions: bool = False, n: int = 10) -> dict:
+    """An account's latest posts (the connected one's by default), or the posts that mention it."""
+    creds = _x_creds(workspace)
+    uid = (creds.get("user") or {}).get("id") if not username else \
+        (x_user(workspace, username).get("data") or {}).get("id")
+    if not uid:
+        raise ValueError(f"no such X account: {username}")
+    return x_call(creds, "GET", f"/2/users/{uid}/{'mentions' if mentions else 'tweets'}",
+                  {"max_results": max(5, min(int(n), 100)), "tweet.fields": X_POST_FIELDS})
+
+
+def x_search(workspace: str, query: str, n: int = 10) -> dict:
+    """Recent posts (the last 7 days) that match an X search query."""
+    creds = _x_creds(workspace)
+    return x_call(creds, "GET", "/2/tweets/search/recent", {"query": query, "max_results": max(10, min(int(n), 100)),
+                                                             "tweet.fields": X_POST_FIELDS, "expansions": "author_id",
+                                                             "user.fields": "username,name"})
+
+
+X_GUIDE = """
+## X (a connector)
+The farm is connected to X as @{username}{access} through its developer account. Use `clodfarm x`:
+- `clodfarm x me`, `clodfarm x user NAME`, `clodfarm x posts [NAME] [-n 10]`, `clodfarm x mentions`,
+  `clodfarm x search "QUERY" [-n 10]` (the last 7 days), `clodfarm x get ID`: JSON, as X returns it.
+- `clodfarm x post "TEXT" [--reply-to ID] [--quote ID] [--media FILE ...]` posts as @{username};
+  `clodfarm x delete ID` deletes one of its posts.
+- `clodfarm x api METHOD /2/PATH [--body JSON] [--query K=V ...]` makes any other X API v2 call, signed as the
+  account (likes, reposts, follows, bookmarks, lists, DMs: docs.x.com/x-api).
+Every call is billed to the farm's developer account, and reads cost per post: ask for few results. A post, reply,
+like, repost, follow, DM or delete is public and done as @{username}: do it only when your person asks for that one
+thing, and say what you posted, with its link. Never print or copy the keys.
+"""
+
+
+def x_guide(workspace: str) -> str:
+    d = x_load(workspace)
+    if not d:
+        return ""
+    access = {"read": " (read only)"}.get(d.get("access") or "", "")
+    return X_GUIDE.format(username=(d.get("user") or {}).get("username") or "the farm's account", access=access)

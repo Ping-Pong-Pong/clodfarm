@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **An X connector, through X's own API.** The farm manager connects the farm's X developer app once: CONNECTORS → X,
+  its API key and secret and an access token and secret for the account (OAuth 1.0a, from the developer console's
+  Keys and tokens), and the bearer token if there is one. The farm checks them with `GET /2/users/me`, signs every
+  call itself, and keeps them in `.farm/connectors/x.json`. Every Claude gets `clodfarm x`: `me`, `user`, `posts`,
+  `mentions`, `search`, `get`, `post TEXT [--reply-to] [--quote] [--media FILE ...]`, `delete`, and `api METHOD PATH`
+  for any other v2 call. Its guide says to post, reply, like, follow, DM or delete only when its person asks, and to
+  keep reads small, since X bills each call. A read-only token says so on the card. From a shell:
+  `clodfarm x connect` (JSON on stdin) and `clodfarm x disconnect`. See docs/connectors.md#x.
 - **Your computer's own Claude Code sessions, on the farm: `clodfarm attach`.** Until now only the farm's own
   sessions were on it, and a computer could only use the farm over MCP. `clodfarm attach https://<farm>` signs the
   computer in on the MCP consent page and adds one hook and a `/farm` command to Claude Code's user settings. A

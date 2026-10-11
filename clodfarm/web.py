@@ -388,7 +388,8 @@ class FarmUI:
             "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
             "connectors": {"stripe": bool(connectors.stripe_load(self.cfg.workspace)),
                            "blender": bool(connectors.blender_load(self.cfg.workspace)),
-                           "google_ads": bool(connectors.gads_load(self.cfg.workspace))},
+                           "google_ads": bool(connectors.gads_load(self.cfg.workspace)),
+                           "x": bool(connectors.x_load(self.cfg.workspace))},
             "agents": agents, "subagents": subs, "recent": recent,
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
                        for e in events[-40:]],
@@ -529,8 +530,8 @@ class FarmUI:
         return [m for m in (st.get("managers") or []) if m] or [self.cfg.name]
 
     def connectors_view(self, who: "Who") -> dict:
-        """The CONNECTORS menu: Slack, Stripe, Blender and Google Ads, as each viewer may see them (the manager manages
-        them)."""
+        """The CONNECTORS menu: Slack, Stripe, Blender, Google Ads and X, as each viewer may see them (the manager
+        manages them)."""
         stripe = connectors.stripe_view(self.cfg.workspace)
         if not who.manager:  # a person sees that it's there and what it's for, not who connected it or the key's end
             stripe = {k: v for k, v in stripe.items() if k in ("connected", "mode", "account", "tools")}
@@ -541,8 +542,11 @@ class FarmUI:
         gads.pop("yaml", None)
         if not who.manager:
             gads = {k: v for k, v in gads.items() if k in ("connected", "customers", "more", "api_version")}
+        x = connectors.x_view(self.cfg.workspace)
+        if not who.manager:  # a person sees which account it is, not the keys' ends or who connected it
+            x = {k: v for k, v in x.items() if k in ("connected", "user", "access", "tools")}
         return {"manage": who.manager, "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
-                "stripe": stripe, "blender": blender, "google_ads": gads}
+                "stripe": stripe, "blender": blender, "google_ads": gads, "x": x}
 
     def profile_mine(self, p: dict, who: "Who") -> bool:
         """Is this browser profile the viewer's Claude's? One nobody owns is the farm's own Claude's."""
@@ -1825,6 +1829,22 @@ def make_handler(ui: FarmUI):
                 if connectors.gads_disconnect(ui.cfg.workspace):
                     ui.manager.share_connectors()
                     store.event("connector.google_ads", "Google Ads disconnected", by="ui")
+                return self._json(ui.connectors_view(who))
+            if path == "/api/connectors/x":  # connect (checked with X first), or change the keys
+                if not who.manager:
+                    return self._err(403, "the farm manager connects the farm's X")
+                creds = {k: str(data.get(k) or "")[:300] for k in (*connectors.X_FIELDS, *connectors.X_OPTIONAL)}
+                v = connectors.x_connect(ui.cfg.workspace, creds, by=f"owner:{who.owner}" if who.owner else "manager")
+                ui.manager.share_connectors()
+                store.event("connector.x", f"X connected as @{(v.get('user') or {}).get('username')}: every Claude can "
+                            "use `clodfarm x`", by="ui")
+                return self._json(ui.connectors_view(who))
+            if path == "/api/connectors/x/disconnect":
+                if not who.manager:
+                    return self._err(403, "the farm manager disconnects the farm's X")
+                if connectors.x_disconnect(ui.cfg.workspace):
+                    ui.manager.share_connectors()
+                    store.event("connector.x", "X disconnected", by="ui")
                 return self._json(ui.connectors_view(who))
             if path == "/api/slack/allow":
                 ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
