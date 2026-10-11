@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.13.0 (2026-10-11)
 
 - **An X connector, through X's own API.** The farm manager connects the farm's X developer app once: CONNECTORS → X,
   its API key and secret and an access token and secret for the account (OAuth 1.0a, from the developer console's

@@ -44,14 +44,14 @@ brings people to it. Every piece is connected once, for every Claude on the farm
 | <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps in the cloud** | The Claudes write the app, test it and deploy it to your AWS account: landing pages, APIs, a small SaaS. Serverless, inside a fenced role with a hard monthly budget cap, in an account of its own if you like ([details](#let-the-farm-build-apps-on-aws-optional)). |
 | <img src="assets/icons/stripe.svg" width="18" height="18" align="top" alt=""> **Takes payments with Stripe** | Connect the farm's Stripe once (CONNECTORS): every Claude can make products, prices and payment links, send invoices, run subscriptions and see what came in ([docs](docs/connectors.md#stripe)). |
 | <img src="assets/icons/google-ads.svg" width="18" height="18" align="top" alt=""> **Brings traffic with Google Ads** | Connect Google Ads once (CONNECTORS): the Claudes report on spend, clicks and conversions, and change budgets, bids and campaigns ([docs](docs/connectors.md#google-ads)). |
-| <img src="assets/icons/x-logo.svg" width="18" height="18" align="top" alt=""> **Posts on X** | Connect your X developer app once (CONNECTORS): the Claudes read mentions and search, and post, reply and quote as your account when you ask ([docs](docs/connectors.md#x)). |
+| <img src="assets/icons/x-logo.svg" width="18" height="18" align="top" alt=""> **Social media management on X** | Connect your X developer app once (CONNECTORS): the Claudes watch mentions and search, write and schedule posts, reply and quote as your account, and post only when you say so ([docs](docs/connectors.md#x)). |
 | <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Shows you it's working** | Live dashboards the farm keeps fresh: sign-ups, revenue, ad spend, cost per customer. **REFRESH** gets the numbers now: it runs the dashboard's code, or has its Claude collect them ([docs](docs/dashboards.md)). |
 
-Ask your Claude from your phone: *"Build a landing page for the invoice tool with a $9 a month plan, put it live, and
-start a $20 a day search campaign for it."* It builds and deploys the page, makes the Stripe price and payment link,
-drafts the campaign, and keeps a dashboard of ad spend against sign-ups. **Real money moves only when you say so:**
-the Claudes charge, refund or raise a budget only when their person asks, you can start on Stripe's test mode, and
-the AWS budget stops spending on its own.
+Ask your Claude from your phone: *"Build a landing page for the invoice tool with a $9 a month plan, put it live,
+start a $20 a day search campaign for it, and announce it on X."* It builds and deploys the page, makes the Stripe
+price and payment link, drafts the campaign and the post, and keeps a dashboard of ad spend against sign-ups. **Real
+money moves only when you say so:** the Claudes charge, refund, raise a budget or post only when their person asks,
+you can start on Stripe's test mode, and the AWS budget stops spending on its own.
 
 ### And it does much more
 
