@@ -33,8 +33,8 @@
 <h3 align="center">A farm of Claude Code agents that builds your apps, puts them in the cloud, takes the payments and
 buys the traffic. Around the clock, on your Claude subscription.</h3>
 
-<p align="center">From the creator of <a href="https://syngularity.ai"><b>Syngularity.ai</b></a>, the AI that makes money
-(<a href="#syngularity">why</a>).</p>
+<p align="center">From the creator of <a href="https://thetowers.ai"><b>thetowers.ai</b></a>, the AI that makes money
+(<a href="#thetowers">why</a>).</p>
 
 <a name="make-money"></a>
 <h2><img src="assets/readme/make-money.png" height="44" alt="Make money"></h2>
@@ -521,14 +521,14 @@ planner. See [docs/bots.md](docs/bots.md).
   Slack control.
 - Several small images keep `claude remote-control` running in a container.
 
-<a name="syngularity"></a>
-### From the creator of Syngularity.ai
+<a name="thetowers"></a>
+### From the creator of thetowers.ai
 
 clodfarm is made by [Matan Kotick](https://github.com/matank001), the creator of
-[Syngularity.ai](https://syngularity.ai). That's why this repo's website link goes there.
+[thetowers.ai](https://thetowers.ai). That's why this repo's website link goes there.
 
 The farm was built as the engine for an experiment in running a small company with a swarm of Claude agents. That
-experiment is now **Syngularity**: an AI that finds what people want to buy, builds the business to sell it and runs
+experiment is now **thetowers**: an AI that finds what people want to buy, builds the business to sell it and runs
 it, with every budget waiting for its owner's OK. It grew from what the farm proved: a queue of missions, workers
 that pick up again after a restart, budgets and pacing, and live dashboards. clodfarm stays open source here, and
 the farm's own home is still [clod.farm](https://clod.farm).
