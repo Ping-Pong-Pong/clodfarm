@@ -1,25 +1,40 @@
 /**
- * blobRig.js — procedural 3D blob mascot rig for the TypePop 3D city.
+ * blobRig.js — procedural 3D FRUIT BLOB mascot rig for the TypePop 3D city.
  *
- * One BlobRig = one MBTI blob resident (bean body, dark oval eyes, two-leaf
- * sprout, nub arms, rounded feet). This REPLACES billboard sprites everywhere
- * (16 city wanderers + room interiors): one consistent 3D art direction.
+ * One BlobRig = one MBTI fruit blob resident (round bean body, round black
+ * DOT eyes with catchlights, per-fruit 3D features, nub arms, rounded feet).
+ * This REPLACES billboard sprites everywhere (16 city wanderers + room
+ * interiors): one consistent 3D art direction.
  *
  * ---------------------------------------------------------------------------
  * API CONTRACT (the integrator depends on this exact API)
  * ---------------------------------------------------------------------------
- *   import { BlobRig, spawnPuff, updatePuffs } from './blobRig.js';
+ *   import { BlobRig, FRUIT_SPECS, spawnPuff, updatePuffs } from './blobRig.js';
  *
- *   const rig = new BlobRig({ bodyColor: '#FF8C69' }); // CSS hex string or hex number
+ *   const rig = new BlobRig({ fruit: 'strawberry' }); // one of 16 FRUIT_SPECS ids
+ *   // legacy form still accepted (fruit spec wins when both are given):
+ *   const rig2 = new BlobRig({ bodyColor: '#FF8C69' }); // plain blob, no features,
+ *                                                      // unless the hex matches a fruit body color
  *   scene.add(rig.group);            // group origin at FEET (y=0 = floor). Blob ~1.5 units tall.
  *   rig.group.position.set(x, 0, z); // move by setting group position
  *   rig.setState('idle' | 'walk' | 'happy' | 'sleep' | 'boop');
  *   rig.setFacing(radians);          // yaw; call each frame while walking with Math.atan2(vx, vz)
  *   rig.update(dt, t);               // dt seconds, t = elapsed seconds. Call every frame.
- *   rig.topY;                        // number ≈ 1.55, for label anchors
+ *   rig.topY;                        // number ≈ 1.55 (pineapple 1.95), for label anchors
+ *   rig.fruit;                       // resolved fruit id, or null for a legacy plain blob
  *   rig.hitProxy;                    // invisible cylinder mesh (visible=false) sized to the body;
  *                                    // integrator adds it to raycast targets and sets userData on it.
  *                                    // (THREE.Raycaster intersects visible=false meshes, so this works.)
+ *
+ * ---------------------------------------------------------------------------
+ * FRUIT FEATURES
+ * ---------------------------------------------------------------------------
+ * Each fruit's static features (seeds, stems, leaves, crowns, stripes, cleft,
+ * dots, shell) are built once per fruit id as transformed primitives with
+ * baked vertex colors, merged into ONE geometry (cached in a module Map) and
+ * rendered with ONE shared MeshStandardMaterial({vertexColors:true}).
+ * One draw call per rig. The feature mesh is a child of the body mesh, so it
+ * rides the squash-and-stretch poses organically.
  *
  * ---------------------------------------------------------------------------
  * PUFF-POOL CHOICE
@@ -36,15 +51,50 @@
  * ---------------------------------------------------------------------------
  * PERFORMANCE
  * ---------------------------------------------------------------------------
- * All geometries are module-level singletons shared by every rig. Materials are
- * cached per body color (one MeshPhysicalMaterial per color, shared by all rigs
- * of that color; feet use a cached 0.92-darkened variant). Nothing is allocated
+ * All geometries are module-level singletons shared by every rig. Body
+ * materials are cached per fruit id (one MeshPhysicalMaterial per fruit,
+ * shared by all rigs of that fruit; feet use a cached 0.92-darkened variant).
+ * Feature geometries are cached per fruit id (16 max). Nothing is allocated
  * inside update() — poses reuse preallocated objects.
  *
  * Three.js r170 API. CapsuleGeometry exists. `outputColorSpace` default is fine.
  */
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// ---------------------------------------------------------------------------
+// Fruit specs
+// ---------------------------------------------------------------------------
+
+function _fs(id, body, rough, scale, topY = 1.55) {
+  return { id, body, rough, scale, topY };
+}
+
+/** 16 fruit specs. `scale` = body base [x,y,z]; `topY` = label-anchor height. */
+export const FRUIT_SPECS = {
+  strawberry: _fs('strawberry', '#E8404F', 0.55, [1.15, 0.95, 1.0]),
+  orange:     _fs('orange',     '#FF9F2E', 0.55, [1.15, 0.95, 1.0]),
+  apple:      _fs('apple',      '#D63A2F', 0.55, [1.15, 0.95, 1.0]),
+  lemon:      _fs('lemon',      '#F7D038', 0.55, [1.10, 0.92, 1.12]),
+  pineapple:  _fs('pineapple',  '#F2B93B', 0.55, [1.15, 0.95, 1.0], 1.95),
+  cherry:     _fs('cherry',     '#C81E3A', 0.55, [1.05, 1.00, 1.00]),
+  mango:      _fs('mango',      '#FF9E2C', 0.55, [1.12, 0.98, 1.00]),
+  watermelon: _fs('watermelon', '#3FA34D', 0.55, [1.15, 0.95, 1.0]),
+  blueberry:  _fs('blueberry',  '#4A5FA5', 0.55, [1.15, 0.95, 1.0]),
+  peach:      _fs('peach',      '#FFB37E', 0.90, [1.15, 0.95, 1.0]),
+  plum:       _fs('plum',       '#5B2A6E', 0.55, [1.15, 0.95, 1.0]),
+  lime:       _fs('lime',       '#A8D93A', 0.55, [1.10, 0.93, 1.08]),
+  grape:      _fs('grape',      '#7B4FA6', 0.75, [1.00, 1.00, 1.00]),
+  kiwi:       _fs('kiwi',       '#8A6D3B', 0.95, [1.15, 0.95, 1.0]),
+  coconut:    _fs('coconut',    '#8A6D4A', 0.55, [1.02, 0.98, 1.02]),
+  avocado:    _fs('avocado',    '#5C8A3A', 0.55, [1.15, 0.95, 1.0]),
+};
+
+// legacy bodyColor -> fruit lookup (hex match against the fruit palette)
+const _hexToFruit = new Map(
+  Object.values(FRUIT_SPECS).map(s => [s.body.toLowerCase(), s.id])
+);
 
 // ---------------------------------------------------------------------------
 // Shared module-level resources (allocated once)
@@ -56,60 +106,280 @@ function hexKey(c) {
 
 const GEO = {
   body: new THREE.SphereGeometry(0.75, 24, 18),
-  unit: new THREE.SphereGeometry(1, 12, 10),          // eyes, highlights, feet, leaves
-  stem: new THREE.CylinderGeometry(0.03, 0.04, 0.28, 8),
+  unit: new THREE.SphereGeometry(1, 12, 10),          // eyes, highlights, feet
   arm: new THREE.CapsuleGeometry(0.09, 0.18, 4, 12),
   shadow: new THREE.PlaneGeometry(2.0, 2.0),
   hit: new THREE.CylinderGeometry(0.95, 0.95, 1.7, 8),
 };
 
-const _bodyMats = new Map(); // hexKey -> MeshPhysicalMaterial (clearcoat clay)
-const _darkMats = new Map(); // hexKey -> darkened MeshStandardMaterial (feet)
+// Low-poly template geometries for fruit features (cloned, never rendered).
+const FGEO = {
+  seed: new THREE.SphereGeometry(0.032, 6, 5),
+  dot3: new THREE.SphereGeometry(0.03, 6, 5),
+  dot5: new THREE.SphereGeometry(0.05, 8, 6),
+  cone: new THREE.ConeGeometry(0.09, 0.22, 8),
+  crown: new THREE.ConeGeometry(0.07, 0.5, 8),
+  stemS: new THREE.CylinderGeometry(0.035, 0.045, 0.3, 8),
+  stemNub: new THREE.CylinderGeometry(0.04, 0.05, 0.12, 8),
+  stemCherry: new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6),
+  leaf: new THREE.SphereGeometry(1, 10, 8), // flattened via scale
+  stripe: new THREE.TorusGeometry(0.76, 0.035, 8, 40, 2.4),
+  cleft: new THREE.TorusGeometry(0.74, 0.028, 8, 32, 1.6),
+  seam: new THREE.TorusGeometry(0.74, 0.022, 8, 40, 2.0),
+  disc: new THREE.CylinderGeometry(0.1, 0.1, 0.04, 12),
+  shell: new THREE.SphereGeometry(0.78, 20, 14),
+};
 
-function bodyMaterial(colorKey) {
-  let m = _bodyMats.get(colorKey);
+const _bodyMats = new Map(); // fruit-id-or-hex -> MeshPhysicalMaterial (clearcoat clay)
+const _darkMats = new Map(); // fruit-id-or-hex -> darkened MeshStandardMaterial (feet)
+
+function bodyMaterial(key, color, rough) {
+  let m = _bodyMats.get(key);
   if (!m) {
     m = new THREE.MeshPhysicalMaterial({
-      color: colorKey,
-      roughness: 0.55,
+      color,
+      roughness: rough,
       clearcoat: 0.35,
       clearcoatRoughness: 0.6,
     });
-    _bodyMats.set(colorKey, m);
+    _bodyMats.set(key, m);
   }
   return m;
 }
 
-function darkMaterial(colorKey) {
-  let m = _darkMats.get(colorKey);
+function darkMaterial(key, color) {
+  let m = _darkMats.get(key);
   if (!m) {
-    const c = new THREE.Color(colorKey).multiplyScalar(0.92);
+    const c = new THREE.Color(color).multiplyScalar(0.92);
     m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 });
-    _darkMats.set(colorKey, m);
+    _darkMats.set(key, m);
   }
   return m;
 }
 
 let _eyeMat = null;
 let _highlightMat = null;
-let _stemMat = null;
-let _leafMat = null;
 
 function eyeMaterial() {
-  if (!_eyeMat) _eyeMat = new THREE.MeshStandardMaterial({ color: 0x2a2320, roughness: 0.4 });
+  if (!_eyeMat) _eyeMat = new THREE.MeshStandardMaterial({ color: 0x16120e, roughness: 0.35 });
   return _eyeMat;
 }
 function highlightMaterial() {
   if (!_highlightMat) _highlightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   return _highlightMat;
 }
-function stemMaterial() {
-  if (!_stemMat) _stemMat = new THREE.MeshStandardMaterial({ color: 0x5da85f, roughness: 0.6 });
-  return _stemMat;
+
+// ---------------------------------------------------------------------------
+// Fruit feature builders (body-local space; body = sphere r=0.75 at origin)
+// ---------------------------------------------------------------------------
+
+const STEM_BROWN = '#6B4A2B';
+const LEAF_GREEN = '#4F9B4F';
+const CROWN_GREEN = '#3E8E41';
+
+const _mm = new THREE.Matrix4();
+const _mv = new THREE.Vector3(), _sv = new THREE.Vector3();
+const _qv = new THREE.Quaternion(), _ev = new THREE.Euler();
+const _cc = new THREE.Color();
+const _up = new THREE.Vector3(0, 1, 0);
+const _dv = new THREE.Vector3();
+
+function _paint(g, hex) {
+  _cc.set(hex);
+  const n = g.attributes.position.count;
+  const a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { a[i * 3] = _cc.r; a[i * 3 + 1] = _cc.g; a[i * 3 + 2] = _cc.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+  return g;
 }
-function leafMaterial() {
-  if (!_leafMat) _leafMat = new THREE.MeshStandardMaterial({ color: 0x6fbf73, roughness: 0.6 });
-  return _leafMat;
+
+// transformed + vertex-colored part (euler rotation)
+function _part(list, geo, hex, px, py, pz, rx, ry, rz, sx, sy, sz) {
+  const g = geo.clone();
+  _ev.set(rx, ry, rz); _qv.setFromEuler(_ev);
+  _mv.set(px, py, pz); _sv.set(sx, sy, sz);
+  _mm.compose(_mv, _qv, _sv);
+  g.applyMatrix4(_mm);
+  list.push(_paint(g, hex));
+}
+
+// transformed + vertex-colored part, +Y axis oriented along (dx,dy,dz)
+function _partDir(list, geo, hex, px, py, pz, dx, dy, dz, sx, sy, sz) {
+  const g = geo.clone();
+  _dv.set(dx, dy, dz).normalize();
+  _qv.setFromUnitVectors(_up, _dv);
+  _mv.set(px, py, pz); _sv.set(sx, sy, sz);
+  _mm.compose(_mv, _qv, _sv);
+  g.applyMatrix4(_mm);
+  list.push(_paint(g, hex));
+}
+
+// brown stem + one flattened leaf near the top (local y ~0.7-0.95)
+function _stemFruitParts(list, tilt, smallLeaf) {
+  _partDir(list, FGEO.stemS, STEM_BROWN, 0, 0.80, 0, tilt, 1, 0, 1, 1, 1);
+  const ls = smallLeaf ? 0.7 : 1;
+  _part(list, FGEO.leaf, LEAF_GREEN, 0.17, 0.90, 0.02,
+    0.25, 0.45, -0.45, 0.13 * ls, 0.045 * ls, 0.07 * ls);
+}
+
+function _buildStrawberry() {
+  const list = [];
+  // 26 seed dots, fibonacci distribution over the upper ~2/3, slightly embedded
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < 26; i++) {
+    const t = i / 25;
+    const cosTh = 1 - t * 1.25; // 1 → -0.25
+    const sinTh = Math.sqrt(Math.max(0, 1 - cosTh * cosTh));
+    const ph = i * ga;
+    const r = 0.715;
+    _part(list, FGEO.seed, '#8A2432',
+      r * sinTh * Math.cos(ph), r * cosTh, r * sinTh * Math.sin(ph),
+      0, 0, 0, 1, 1, 1);
+  }
+  // calyx: 6 flattened green cones in a star at the top
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + 0.26;
+    _partDir(list, FGEO.cone, '#3E8E41',
+      0.40 * Math.cos(a), 0.60, 0.40 * Math.sin(a),
+      0.9 * Math.cos(a), 0.35, 0.9 * Math.sin(a),
+      1, 0.55, 0.8);
+  }
+  // tiny stem
+  _part(list, FGEO.stemNub, '#5C8A3C', 0, 0.76, 0, 0, 0, 0.15, 0.7, 0.9, 0.7);
+  return list;
+}
+
+function _buildPineapple() {
+  const list = [];
+  // crown of 7 long green cones fanning up/outward
+  _partDir(list, FGEO.crown, CROWN_GREEN, 0, 0.70, 0, 0, 1, 0, 1, 1, 1);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    _partDir(list, FGEO.crown, '#357A37',
+      0.16 * Math.cos(a), 0.64, 0.16 * Math.sin(a),
+      0.45 * Math.cos(a), 1, 0.45 * Math.sin(a),
+      1, 1, 1);
+  }
+  return list;
+}
+
+function _buildCherry() {
+  const list = [];
+  // two thin stems angled apart from the top + one leaf
+  _partDir(list, FGEO.stemCherry, '#5C4A2E', -0.06, 0.85, 0, -0.45, 1, 0.1, 1, 1, 1);
+  _partDir(list, FGEO.stemCherry, '#5C4A2E', 0.06, 0.85, 0, 0.45, 1, -0.1, 1, 1, 1);
+  _part(list, FGEO.leaf, LEAF_GREEN, 0.15, 1.02, 0.05,
+    0.2, 0.4, -0.5, 0.12, 0.04, 0.06);
+  return list;
+}
+
+function _buildWatermelon() {
+  const list = [];
+  // 3 dark-green stripes on vertical longitudes 0°/60°/120°, hugging the body
+  for (let k = 0; k < 3; k++) {
+    const g = FGEO.stripe.clone();
+    g.rotateZ(Math.PI / 2 - 2.4 / 2); // center the 2.4-rad arc at +Y
+    g.rotateY((k / 3) * Math.PI);     // 0°/60°/120°
+    list.push(_paint(g, '#2B6B2F'));
+  }
+  _part(list, FGEO.stemNub, STEM_BROWN, 0, 0.74, 0, 0, 0, 0.1, 0.8, 0.9, 0.8);
+  return list;
+}
+
+function _buildBlueberry() {
+  const list = [];
+  // crown: small dark disc on top + 5 tiny spheres in a star around it
+  _part(list, FGEO.disc, '#2C3A5E', 0, 0.74, 0, 0, 0, 0, 1, 1, 1);
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * Math.PI * 2 + 0.3;
+    _part(list, FGEO.dot3, '#2C3A5E',
+      0.13 * Math.cos(a), 0.735, 0.13 * Math.sin(a), 0, 0, 0, 1, 1, 1);
+  }
+  return list;
+}
+
+function _buildPeach() {
+  const list = [];
+  // cleft: thin torus arc, shallow-embedded on the front-left meridian
+  const g = FGEO.cleft.clone();
+  g.rotateZ(Math.PI / 2 - 1.6 / 2); // center the 1.6-rad arc at +Y
+  g.rotateY(-Math.PI * 0.75);       // swing to the front-left longitude
+  list.push(_paint(g, '#D98A4E'));
+  return list;
+}
+
+function _buildPlum() {
+  const list = [];
+  // seam: thin torus arc down the front
+  const g = FGEO.seam.clone();
+  g.rotateZ(Math.PI / 2 - 2.0 / 2); // center the 2.0-rad arc at +Y
+  g.rotateY(-Math.PI / 2);          // bring the meridian to the front (+z)
+  list.push(_paint(g, '#3D1C4E'));
+  // tiny stem nub
+  _part(list, FGEO.stemNub, STEM_BROWN, 0, 0.74, 0, 0, 0, 0, 0.8, 0.9, 0.8);
+  return list;
+}
+
+function _buildKiwi() {
+  const list = [];
+  // tiny stem nub only
+  _part(list, FGEO.stemNub, STEM_BROWN, 0, 0.73, 0, 0, 0, 0, 0.9, 1, 0.9);
+  return list;
+}
+
+function _buildCoconut() {
+  const list = [];
+  // three dark dots on the front-upper face: two above the eyes, one below-center
+  _part(list, FGEO.dot5, '#4A3520', -0.19, 0.35, 0.61, 0, 0, 0, 1, 1, 1);
+  _part(list, FGEO.dot5, '#4A3520', 0.19, 0.35, 0.61, 0, 0, 0, 1, 1, 1);
+  _part(list, FGEO.dot5, '#4A3520', 0, 0.08, 0.72, 0, 0, 0, 1, 1, 1);
+  return list;
+}
+
+function _buildAvocado() {
+  const list = [];
+  // darker-green bottom shell intersecting the lower body (kept just off the floor)
+  _part(list, FGEO.shell, '#3E6B25', 0, -0.20, 0, 0, 0, 0, 1.16, 0.6, 1.0);
+  return list;
+}
+
+const _FRUIT_BUILDERS = {
+  strawberry: _buildStrawberry,
+  orange: () => { const l = []; _stemFruitParts(l, 0.30, false); return l; },
+  apple: () => { const l = []; _stemFruitParts(l, 0.50, false); return l; },
+  lemon: () => { const l = []; _stemFruitParts(l, 0.35, false); return l; },
+  pineapple: _buildPineapple,
+  cherry: _buildCherry,
+  mango: () => { const l = []; _stemFruitParts(l, 0.30, false); return l; },
+  watermelon: _buildWatermelon,
+  blueberry: _buildBlueberry,
+  peach: _buildPeach,
+  plum: _buildPlum,
+  lime: () => { const l = []; _stemFruitParts(l, 0.35, true); return l; },
+  grape: () => { const l = []; _stemFruitParts(l, 0.30, true); return l; },
+  kiwi: _buildKiwi,
+  coconut: _buildCoconut,
+  avocado: _buildAvocado,
+};
+
+// One merged geometry per fruit id (cached). Rendered with the single shared
+// vertex-colored material below: one draw call per rig.
+const _fruitGeoCache = new Map();
+function fruitFeatureGeometry(fruitId) {
+  let g = _fruitGeoCache.get(fruitId);
+  if (!g) {
+    const parts = _FRUIT_BUILDERS[fruitId]();
+    g = mergeGeometries(parts, false);
+    for (const p of parts) p.dispose();
+    _fruitGeoCache.set(fruitId, g);
+  }
+  return g;
+}
+
+let _featMat = null;
+function featureMaterial() {
+  if (!_featMat) _featMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+  return _featMat;
 }
 
 // Soft radial-gradient blob shadow texture (shared)
@@ -232,7 +502,6 @@ const TUNE = {
   idleBreathFreq: 2.2,      // rad/s
   blinkMin: 2.4, blinkMax: 5.5, // seconds between blinks
   blinkDur: 0.12,           // seconds eyes stay shut
-  sproutSwayAmp: 0.08, sproutSwayFreq: 1.7,
   walkFreq: 9,              // rad/s step cycle
   walkBobAmp: 0.16,         // vertical hop height
   walkRollAmp: 0.09,        // waddle roll
@@ -247,18 +516,35 @@ const TUNE = {
 };
 
 function newPose() {
-  return { sX: 1, sY: 1, sZ: 1, bobY: 0, roll: 0, eyeY: 1, sproutZ: 0, armL: 0, armR: 0, bodyY: 0.72 };
+  return { sX: 1, sY: 1, sZ: 1, bobY: 0, roll: 0, eyeY: 1, armL: 0, armR: 0, bodyY: 0.72 };
 }
 
 export class BlobRig {
   /**
    * @param {object} opts
-   * @param {string|number} opts.bodyColor - CSS hex string ('#FF8C69') or hex number.
+   * @param {string} [opts.fruit] - one of the 16 FRUIT_SPECS ids; wins over bodyColor.
+   * @param {string|number} [opts.bodyColor] - legacy: CSS hex string or hex number.
+   *   Matched against the fruit palette (a fruit blob with features results);
+   *   unmatched colors fall back to a plain featureless blob.
    */
-  constructor({ bodyColor = '#FF8C69' } = {}) {
-    const key = hexKey(bodyColor);
-    const bMat = bodyMaterial(key);
-    const dMat = darkMaterial(key);
+  constructor({ fruit = null, bodyColor = '#FF8C69' } = {}) {
+    // --- resolve the fruit spec ---
+    let spec;
+    let key;
+    if (fruit && FRUIT_SPECS[fruit]) {
+      spec = FRUIT_SPECS[fruit];
+      key = fruit;
+    } else {
+      const hex = hexKey(bodyColor);
+      const fid = _hexToFruit.get(hex);
+      if (fid) { spec = FRUIT_SPECS[fid]; key = fid; }
+      else {
+        spec = { id: null, body: hex, rough: 0.55, scale: [1.15, 0.95, 1.0], topY: 1.55 };
+        key = hex;
+      }
+    }
+    const bMat = bodyMaterial(key, spec.body, spec.rough);
+    const dMat = darkMaterial(key, spec.body);
 
     // group: origin at FEET (y=0 = floor). Integrator positions this.
     this.group = new THREE.Group();
@@ -266,49 +552,39 @@ export class BlobRig {
     this.bobber = new THREE.Group();
     this.group.add(this.bobber);
 
-    // --- body (bean) ---
+    // --- body (round fruit bean) ---
     this.body = new THREE.Mesh(GEO.body, bMat);
-    this.body.scale.set(1.15, 0.95, 1.0);
+    this.body.scale.set(spec.scale[0], spec.scale[1], spec.scale[2]);
     this.body.position.y = 0.72;
     this.body.castShadow = true;
     this.body.receiveShadow = false;
     this.bobber.add(this.body);
 
-    // --- eyes (dark ovals, front = +z) + white highlight dots ---
+    // --- fruit features (one merged geometry, one shared vertex-colored
+    //     material = one draw call). Child of the body, so it rides squash.
+    this.features = null;
+    if (spec.id) {
+      this.features = new THREE.Mesh(fruitFeatureGeometry(spec.id), featureMaterial());
+      this.features.castShadow = true;
+      this.body.add(this.features);
+    }
+
+    // --- eyes: round black DOT eyes (true spheres) + white catchlights ---
     const eMat = eyeMaterial();
     const hMat = highlightMaterial();
     this.eyeL = new THREE.Mesh(GEO.unit, eMat);
-    this.eyeL.scale.set(0.09, 0.13, 0.05);
+    this.eyeL.scale.set(0.095, 0.095, 0.05);
     this.eyeL.position.set(-0.22, 0.85, 0.62);
     this.eyeR = new THREE.Mesh(GEO.unit, eMat);
-    this.eyeR.scale.set(0.09, 0.13, 0.05);
+    this.eyeR.scale.set(0.095, 0.095, 0.05);
     this.eyeR.position.set(0.22, 0.85, 0.62);
     this.hlL = new THREE.Mesh(GEO.unit, hMat);
-    this.hlL.scale.setScalar(0.025);
-    this.hlL.position.set(-0.25, 0.90, 0.665);
+    this.hlL.scale.set(0.028, 0.028, 0.028);
+    this.hlL.position.set(-0.268, 0.895, 0.652);
     this.hlR = new THREE.Mesh(GEO.unit, hMat);
-    this.hlR.scale.setScalar(0.025);
-    this.hlR.position.set(0.19, 0.90, 0.665);
+    this.hlR.scale.set(0.028, 0.028, 0.028);
+    this.hlR.position.set(0.172, 0.895, 0.652);
     this.bobber.add(this.eyeL, this.eyeR, this.hlL, this.hlR);
-
-    // --- sprout (stem + two leaves), sways ---
-    this.sprout = new THREE.Group();
-    this.sprout.position.set(0, 1.40, 0);
-    const stem = new THREE.Mesh(GEO.stem, stemMaterial());
-    stem.position.y = 0.14;
-    stem.castShadow = true;
-    const leafL = new THREE.Mesh(GEO.unit, leafMaterial());
-    leafL.scale.set(0.154, 0.055, 0.077);
-    leafL.position.set(-0.13, 0.30, 0);
-    leafL.rotation.set(0, 0.4, -0.5);
-    leafL.castShadow = true;
-    const leafR = new THREE.Mesh(GEO.unit, leafMaterial());
-    leafR.scale.set(0.154, 0.055, 0.077);
-    leafR.position.set(0.13, 0.30, 0);
-    leafR.rotation.set(0, -0.4, 0.5);
-    leafR.castShadow = true;
-    this.sprout.add(stem, leafL, leafR);
-    this.bobber.add(this.sprout);
 
     // --- nub arms ---
     const aMat = bMat;
@@ -365,7 +641,9 @@ export class BlobRig {
     this.group.add(this.hitProxy);
 
     // --- public contract fields ---
-    this.topY = 1.55; // ≈ head-top height, for label anchors
+    this.fruit = spec.id;      // fruit id, or null for a legacy plain blob
+    this.topY = spec.topY;     // label-anchor height (1.95 for pineapple)
+    this._bs = spec.scale;     // body base scale [x,y,z]
 
     // --- state machine ---
     this._state = 'idle';
@@ -408,7 +686,7 @@ export class BlobRig {
     // snapshot current pose so the transition lerps from it
     const a = this._prev, b = this._pose;
     a.sX = b.sX; a.sY = b.sY; a.sZ = b.sZ; a.bobY = b.bobY; a.roll = b.roll;
-    a.eyeY = b.eyeY; a.sproutZ = b.sproutZ; a.armL = b.armL; a.armR = b.armR; a.bodyY = b.bodyY;
+    a.eyeY = b.eyeY; a.armL = b.armL; a.armR = b.armR; a.bodyY = b.bodyY;
     this._state = s;
     this._stateT = 0;
     this._blend = 0;
@@ -432,7 +710,7 @@ export class BlobRig {
     this._stateT += dt;
     const P = this._tgt;
 
-    // --- base pose: idle breathing + sprout sway ---
+    // --- base pose: idle breathing ---
     const br = Math.sin(t * TUNE.idleBreathFreq);
     P.sX = 1 - 0.015 * br;
     P.sY = 1 + TUNE.idleBreathAmp * br;
@@ -443,9 +721,8 @@ export class BlobRig {
     P.bodyY = 0.72;
     P.armL = 0;
     P.armR = 0;
-    P.sproutZ = TUNE.sproutSwayAmp * Math.sin(t * TUNE.sproutSwayFreq);
 
-    // --- blink (idle only): eyes shut to y=0.08 for 0.12s ---
+    // --- blink (idle only): eyes shut to 0.1 for 0.12s ---
     if (this._state === 'idle') {
       this._blinkT -= dt;
       if (this._blinkT <= 0) {
@@ -472,12 +749,11 @@ export class BlobRig {
         P.sY *= 1 - TUNE.stepSquash * this._pulse;
         P.sX *= 1 + 0.04 * this._pulse;
         P.sZ *= 1 + 0.04 * this._pulse;
-        P.sproutZ += 0.12 * Math.sin(w + 1);
         break;
       }
       case 'happy': {
         const ht = this._stateT;
-        P.eyeY = 1.2;
+        P.eyeY = 1.25;
         if (ht < 0.15) {                    // anticipation squash
           const u = ht / 0.15;
           P.sY = 1 - 0.3 * u; P.sX = 1 + 0.25 * u; P.sZ = 1 + 0.15 * u;
@@ -494,7 +770,7 @@ export class BlobRig {
           P.sY = 0.72 + 0.28 * u;
           P.sX = 1.25 - 0.25 * u;
           P.sZ = 1.15 - 0.15 * u;
-          P.eyeY = 1.2 - 0.2 * u;
+          P.eyeY = 1.25 - 0.25 * u;
         }
         if (ht >= TUNE.happyDur) {
           endTimeline = this._pending || 'idle';
@@ -505,9 +781,8 @@ export class BlobRig {
       case 'sleep': {
         P.sY = TUNE.sleepScaleY + 0.02 * Math.sin(t * 1.5); // slow sleep breathing
         P.sX = 1.12; P.sZ = 1.08;
-        P.eyeY = 0.06 / 0.13;   // eyes shut
+        P.eyeY = 0.1;   // eyes shut
         P.bodyY = TUNE.sleepBodyY;
-        P.sproutZ *= 0.4;       // calmer sway
         break;
       }
       case 'boop': {
@@ -538,7 +813,7 @@ export class BlobRig {
     }
 
     if (this._blink > 0 && (this._state === 'idle' || this._state === 'walk')) {
-      P.eyeY = 0.08 / 0.13; // blink overrides
+      P.eyeY = 0.1; // blink overrides
     }
 
     // --- blend from previous pose on state change (~0.15s) ---
@@ -553,25 +828,32 @@ export class BlobRig {
       pose.bobY = a.bobY + (P.bobY - a.bobY) * k;
       pose.roll = a.roll + (P.roll - a.roll) * k;
       pose.eyeY = a.eyeY + (P.eyeY - a.eyeY) * k;
-      pose.sproutZ = a.sproutZ + (P.sproutZ - a.sproutZ) * k;
       pose.armL = a.armL + (P.armL - a.armL) * k;
       pose.armR = a.armR + (P.armR - a.armR) * k;
       pose.bodyY = a.bodyY + (P.bodyY - a.bodyY) * k;
     } else {
       pose.sX = P.sX; pose.sY = P.sY; pose.sZ = P.sZ; pose.bobY = P.bobY;
-      pose.roll = P.roll; pose.eyeY = P.eyeY; pose.sproutZ = P.sproutZ;
+      pose.roll = P.roll; pose.eyeY = P.eyeY;
       pose.armL = P.armL; pose.armR = P.armR; pose.bodyY = P.bodyY;
     }
 
     // --- apply ---
-    this.body.scale.set(1.15 * pose.sX, 0.95 * pose.sY, 1.0 * pose.sZ);
+    this.body.scale.set(this._bs[0] * pose.sX, this._bs[1] * pose.sY, this._bs[2] * pose.sZ);
     this.body.position.y = pose.bodyY;
     this.bobber.position.y = pose.bobY;
     this.bobber.rotation.z = pose.roll;
-    const ey = 0.13 * pose.eyeY;
+    // dot eyes: eyeY is a direct multiplier (1 = open)
+    const ey = 0.095 * pose.eyeY;
     this.eyeL.scale.y = ey;
     this.eyeR.scale.y = ey;
-    this.sprout.rotation.z = pose.sproutZ;
+    // catchlights shrink with the eyes, hidden when nearly shut
+    const clOn = pose.eyeY >= 0.3;
+    this.hlL.visible = clOn;
+    this.hlR.visible = clOn;
+    if (clOn) {
+      this.hlL.scale.y = 0.028 * pose.eyeY;
+      this.hlR.scale.y = 0.028 * pose.eyeY;
+    }
     this.armL.rotation.x = pose.armL;
     this.armR.rotation.x = pose.armR;
 
