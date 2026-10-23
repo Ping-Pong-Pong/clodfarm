@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>TypePop City · 3D</title>
+<link rel="stylesheet" href="./style.css?v=1">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="loader">
+  <div class="blob"></div>
+  <p>Raising the city&hellip;</p>
+</div>
+
+<div id="ui">
+  <div class="topbar">
+    <div class="topleft">
+      <div class="wordmark">typepop</div>
+      <div class="masthead">TYPEPOP CITY <span>&middot;</span> 3D</div>
+    </div>
+    <div class="topright">
+      <button id="btnOverview" class="pill">&larr; Overview</button>
+      <button id="btnDirectory" class="pill">Directory <b>16</b></button>
+      <button id="dnPill" class="pill" aria-label="Toggle day and night"><span class="dot"></span><span id="dnLabel">Day</span></button>
+    </div>
+  </div>
+
+  <div class="hint">Drag to turn &middot; Scroll to ride &middot; Click a house to step in</div>
+
+  <div id="rail" aria-label="House selector">
+    <button class="chev" id="railUp" aria-label="Previous house">&#9650;</button>
+    <div id="railTicks"></div>
+    <button class="chev" id="railDown" aria-label="Next house">&#9660;</button>
+  </div>
+
+  <div id="tags"></div>
+
+  <div id="directory" class="closed" aria-hidden="true">
+    <div class="dir-head"><span>HOUSE DIRECTORY</span><button id="dirClose" aria-label="Close directory">&#10005;</button></div>
+    <div class="dir-grid" id="dirGrid"></div>
+  </div>
+
+  <div id="sheetBackdrop"></div>
+  <aside id="sheet" aria-hidden="true">
+    <div class="grab" id="sheetGrab"></div>
+    <div class="eyebrow" id="shEyebrow">HOUSE 01 &middot; ENFP</div>
+    <div class="who">
+      <img id="shAvatar" alt="Resident blob">
+      <div>
+        <h2 id="shTitle"></h2>
+        <p id="shDesc"></p>
+      </div>
+    </div>
+    <div class="ctas">
+      <button id="ctaStep" class="cta primary">Step inside</button>
+      <button id="ctaMeet" class="cta">Meet the resident</button>
+    </div>
+    <div class="sheet-sec">
+      <button class="sec-toggle" id="secToggle">AT HOME <span>&#9662;</span></button>
+      <ol class="traits" id="shTraits"></ol>
+    </div>
+    <div class="meta">
+      <div><span class="k">MOOD NOW</span><span id="shMood"></span></div>
+      <div><span class="k">FRIENDS</span><span id="shFriends"></span></div>
+    </div>
+  </aside>
+</div>
+
+<!-- Worker 2 (interiors) renders into this overlay and exposes
+     window.Interior = { enter(typeKey, onExit) }. -->
+<div id="interior-veil"></div>
+
+<div id="errtoast"></div>
+
+<script>
+/* surface runtime errors on-screen so a phone failure is diagnosable */
+window.addEventListener('error', function (e) {
+  var el = document.getElementById('errtoast');
+  if (el && !el.dataset.watchdog) {
+    el.style.display = 'block';
+    el.textContent = 'Error: ' + (e.message || (e.error && e.error.message) || 'unknown');
+  }
+});
+/* boot watchdog: if the 3D module never starts (e.g. CDN blocked),
+   say so instead of sitting on a black screen forever */
+setTimeout(function () {
+  if (!window.__city3d_booted) {
+    var t = document.getElementById('errtoast');
+    t.style.display = 'block';
+    t.dataset.watchdog = '1';
+    t.textContent = 'Still loading after 12s — the 3D library (jsdelivr CDN) may be blocked on this network.';
+  }
+}, 12000);
+</script>
+
+<!-- interior.js is owned by Worker 2; it must attach window.Interior -->
+<script type="module" src="./js/interior.js?v=1"></script>
+<script type="module" src="./js/main.js?v=1"></script>
+</body>
+</html>
