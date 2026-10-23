@@ -33,7 +33,7 @@
 
 import * as THREE from 'three';
 import { BlobRig } from './blobRig.js';
-import { typeByKey } from './types.js';
+import { typeByKey } from './types.js?v=2';
 
 /* ------------------------------------------------------------------ */
 /* tuning knobs (integrator-facing)                                    */
@@ -592,6 +592,7 @@ function buildRoom(typeKey) {
 /* Room3D singleton controller                                         */
 /* ------------------------------------------------------------------ */
 let active = null; // { room, api, onExit, raf, saved, btn, timers[], handlers }
+const _projV = new THREE.Vector3();
 
 function _stopTimers(st) {
   for (const t of st.timers) { clearTimeout(t); clearInterval(t); }
@@ -843,6 +844,19 @@ export const Room3D = {
   enter(typeKey, api, onExit) { _enter(typeKey, api, onExit); },
   exit() { _exit(false); },
   getResident() { return active ? active.room.rig : null; },
+  /* project the resident's head to client coords (for 3D-anchored DOM hints) */
+  residentScreenPos() {
+    if (!active) return null;
+    const v = _projV.set(0, 0, 0);
+    active.room.rig.group.getWorldPosition(v);
+    v.y += 1.9; // above the blob's head
+    v.project(active.room.camera);
+    if (v.z > 1) return null;
+    return {
+      x: (v.x * 0.5 + 0.5) * window.innerWidth,
+      y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+    };
+  },
   /** tuning knobs exposed for the integrator */
   knobs: KNOBS,
 };
