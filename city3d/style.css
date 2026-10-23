@@ -139,7 +139,19 @@ html,body{height:100%;overflow:hidden;background:#0d0a08;
 .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.26em;color:var(--accent);margin-bottom:10px}
 .who{display:flex;gap:14px;align-items:center;margin-bottom:14px}
 #shAvatar{width:64px;height:64px;border-radius:20px;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.12);flex:none;object-fit:contain;padding:4px}
+  border:2px solid rgba(255,255,255,.12);flex:none;display:flex;align-items:center;
+  justify-content:center;font-size:34px;line-height:1}
+/* room-entry greeting bubble: white pill, colored dot, dark text */
+#greetBubble{position:fixed;left:50%;bottom:calc(118px + env(safe-area-inset-bottom));
+  transform:translate(-50%,12px);z-index:45;max-width:min(86vw,430px);
+  background:rgba(255,255,255,.96);color:#2b2118;font-size:14px;line-height:1.4;
+  padding:10px 16px;border-radius:999px;display:flex;align-items:center;gap:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;pointer-events:none;
+  transition:opacity .35s ease,transform .35s ease}
+#greetBubble.show{opacity:1;transform:translate(-50%,0)}
+#greetBubble .dot{width:9px;height:9px;border-radius:50%;flex:none}
+/* directory rows: fruit emoji chip replaces the old color dot */
+.dir-emoji{font-size:17px;width:26px;flex:none;text-align:center;line-height:1}
 #shTitle{font-family:var(--serif);font-style:italic;font-size:23px;font-weight:600;
   letter-spacing:.01em;margin-bottom:4px}
 #shDesc{font-size:12.5px;line-height:1.5;opacity:.75}
