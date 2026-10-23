@@ -11,9 +11,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { TYPES, typeByKey } from './types.js';
+import { TYPES, typeByKey } from './types.js?v=2';
 import { BlobRig, updatePuffs } from './blobRig.js';
-import { Room3D } from './room3d.js';
+import { Room3D } from './room3d.js?v=2';
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
@@ -452,14 +452,17 @@ const activePins = []; // {g, houseKey, kind, ttl, phase}
     pinPool.push(g);
   }
 }
-function spawnPin(houseKey, kind, ttl = Infinity) {
+function spawnPin(houseKey, kind, ttl = Infinity, delayMs = 0) {
   if (activePins.some((p) => p.houseKey === houseKey && p.kind === kind)) return;
   const g = pinPool.find((x) => !x.visible);
   if (!g) return;
   g.visible = true;
   g.userData.houseKey = houseKey;
   g.userData.mat.emissive.set(kind === 'visitor' ? 0x7dd3fc : 0xffcf5e);
-  const pin = { g, houseKey, kind, ttl, phase: rand(0, Math.PI * 2) };
+  // staged arrival: pins scale in with a stagger rather than popping
+  const bornAt = performance.now() + delayMs;
+  g.scale.setScalar(0.001);
+  const pin = { g, houseKey, kind, ttl, phase: rand(0, Math.PI * 2), bornAt };
   activePins.push(pin);
   tapTargets.push(g);
 }
@@ -478,6 +481,12 @@ function updatePins(dt, now) {
       pin.ttl -= dt;
       if (pin.ttl <= 0) { removePin(pin.houseKey, pin.kind); continue; }
     }
+    // scale-in over ~280ms after the stagger delay (staged arrival)
+    const age = now - pin.bornAt;
+    if (age < 0) { pin.g.scale.setScalar(0.001); continue; }
+    const s = Math.min(1, age / 280);
+    const e = 1 + 2.2 * Math.pow(s - 1, 3) + 1.2 * Math.pow(s - 1, 2); // easeOutBack-ish
+    pin.g.scale.setScalar(Math.max(0.001, e));
     const h = houseByKey(pin.houseKey);
     pin.g.position.set(
       h.pos.x,
@@ -577,6 +586,7 @@ el.addEventListener('pointerdown', (e) => {
   }
   if (flight) { const r = flight.resolve; flight = null; if (r) r(); } // don't strand awaiters
   focusKey = null;           // stop following the resident
+  syncOverview();
   lastInteract = performance.now();
   el.setPointerCapture(e.pointerId);
 });
@@ -647,6 +657,12 @@ function traitsFor(t) {
     `Often overheard: \u201c${t.oneLiners[0]}\u201d`,
   ];
 }
+const overviewBtn = document.getElementById('btnOverview');
+// The Overview pill only appears while a house is focused (sheet open or
+// resident followed) — otherwise the city IS the overview.
+function syncOverview() {
+  overviewBtn.classList.toggle('show', !!(sheetKey || focusKey));
+}
 function openSheet(key) {
   const h = houseByKey(key);
   const t = h.type;
@@ -670,6 +686,7 @@ function openSheet(key) {
   sheetEl.setAttribute('aria-hidden', 'false');
   backdropEl.classList.add('open');
   markRailActive(key);
+  syncOverview();
 }
 function refreshSheetLive() {
   if (!sheetKey) return;
@@ -678,12 +695,25 @@ function refreshSheetLive() {
   document.getElementById('shMood').textContent = moodFor(r);
   document.getElementById('shFriends').textContent =
     r.friends.size ? `${r.friends.size} \u2014 ${[...r.friends].map((k) => typeByKey(k).palName).join(', ')}` : 'None yet';
+  // live status line: the resident's current activity, rotating every ~6s
+  // through their type-flavored present-tense activities (highest-ROI liveliness trick)
+  const acts = r.type.activities || [];
+  if (acts.length) {
+    const act = acts[Math.floor(Date.now() / 6000) % acts.length];
+    const doingEl = document.getElementById('shDoing');
+    const html = `<span class="dot"></span>${r.type.palName.toUpperCase()} &middot; ${act}`;
+    if (doingEl.dataset.act !== act) {
+      doingEl.dataset.act = act;
+      doingEl.innerHTML = html;
+    }
+  }
 }
 function closeSheet() {
   sheetKey = null;
   sheetEl.classList.remove('open');
   sheetEl.setAttribute('aria-hidden', 'true');
   backdropEl.classList.remove('open');
+  syncOverview();
 }
 backdropEl.addEventListener('click', closeSheet);
 // drag-down to dismiss
@@ -711,11 +741,15 @@ backdropEl.addEventListener('click', closeSheet);
     zone.addEventListener('pointercancel', end);
   });
 }
-function selectHouse(key, { fly = true, sheet = true } = {}) {
+async function selectHouse(key, { fly = true, sheet = true } = {}) {
   const h = houseByKey(key);
   if (!h) return;
+  // Staged arrival (towers.app sequencing): the camera flight lands FIRST,
+  // the card content cross-swaps only ON ARRIVAL — nothing pops early.
+  focusKey = null;
+  markRailActive(key);
+  if (fly) { await flyToHouse(h); lastInteract = performance.now(); }
   if (sheet) openSheet(key);
-  if (fly) { focusKey = null; flyToHouse(h); lastInteract = performance.now(); }
 }
 
 /* rail */
@@ -753,34 +787,60 @@ setInterval(() => {
   if (best && !sheetKey) markRailActive(best.key);
 }, 600);
 
-/* directory */
+/* directory: rows [number | type | playful title] + live search */
 const dirEl = document.getElementById('directory');
-{
-  const grid = document.getElementById('dirGrid');
-  TYPES.forEach((t) => {
-    const c = document.createElement('button');
-    c.className = 'dir-cell';
-    c.innerHTML = `<span class="sw" style="background:${t.color}"></span>` +
+const dirList = document.getElementById('dirList');
+const dirSearch = document.getElementById('dirSearch');
+function buildDirRows(filter = '') {
+  dirList.innerHTML = '';
+  const q = filter.trim().toLowerCase();
+  TYPES.forEach((t, i) => {
+    const hay = `${t.name} ${t.nickname} ${t.palName}`.toLowerCase();
+    if (q && !hay.includes(q)) return;
+    const row = document.createElement('button');
+    row.className = 'dir-row';
+    row.innerHTML =
+      `<span class="num">${String(i + 1).padStart(2, '0')}</span>` +
+      `<span class="sw" style="background:${t.color}"></span>` +
       `<span class="code">${t.name}</span><span class="nick">${t.nickname}</span>`;
-    c.addEventListener('click', () => {
-      dirEl.classList.remove('open'); dirEl.classList.add('closed');
+    row.setAttribute('aria-label', `Fly to the ${t.name} house`);
+    row.addEventListener('click', () => {
+      closeDir();
       selectHouse(t.key, { fly: true, sheet: true });
     });
-    grid.appendChild(c);
+    dirList.appendChild(row);
   });
+  if (!dirList.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dir-row';
+    empty.style.cursor = 'default';
+    empty.innerHTML = `<span class="nick">No resident matches \u201c${filter}\u201d</span>`;
+    dirList.appendChild(empty);
+  }
 }
+function openDir() {
+  dirSearch.value = '';
+  buildDirRows();
+  dirEl.classList.add('open');
+  dirEl.classList.remove('closed');
+  dirEl.setAttribute('aria-hidden', 'false');
+}
+function closeDir() {
+  dirEl.classList.remove('open');
+  dirEl.classList.add('closed');
+  dirEl.setAttribute('aria-hidden', 'true');
+}
+dirSearch.addEventListener('input', () => buildDirRows(dirSearch.value));
+buildDirRows();
 document.getElementById('btnDirectory').addEventListener('click', () => {
-  const open = dirEl.classList.toggle('open');
-  dirEl.classList.toggle('closed', !open);
-  dirEl.setAttribute('aria-hidden', String(!open));
+  if (dirEl.classList.contains('open')) closeDir();
+  else openDir();
 });
-document.getElementById('dirClose').addEventListener('click', () => {
-  dirEl.classList.remove('open'); dirEl.classList.add('closed');
-});
+document.getElementById('dirClose').addEventListener('click', closeDir);
 document.getElementById('btnOverview').addEventListener('click', () => {
+  focusKey = null;
   closeSheet();
   dirEl.classList.remove('open'); dirEl.classList.add('closed');
-  focusKey = null;
   flyOverview();
   lastInteract = performance.now();
 });
@@ -800,6 +860,7 @@ document.getElementById('ctaMeet').addEventListener('click', () => {
   const r = residents.find((x) => x.key === key);
   if (!r) return;
   focusKey = key;
+  syncOverview();
   // speech bubble with a one-liner, white pill + colored dot + dark text
   r.bubbleText = `\u201c${r.type.oneLiners[(Math.random() * r.type.oneLiners.length) | 0]}\u201d`;
   r.bubbleUntil = performance.now() + FOCUS_BUBBLE_MS;
@@ -816,7 +877,72 @@ document.getElementById('secToggle').addEventListener('click', (e) => {
   document.getElementById('shTraits').classList.toggle('open');
 });
 
+/* share: deep link per house (?house=<type>) — beats towers.app, which has none */
+const copyToastEl = document.getElementById('copytoast');
+let copyToastTimer = 0;
+function showCopyToast(msg) {
+  copyToastEl.textContent = msg;
+  copyToastEl.classList.add('show');
+  clearTimeout(copyToastTimer);
+  copyToastTimer = setTimeout(() => copyToastEl.classList.remove('show'), 2200);
+}
+function houseUrl(key) {
+  const u = new URL(window.location.href);
+  u.searchParams.set('house', key);
+  return u.toString();
+}
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    // iOS fallback: hidden textarea + execCommand
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { /* noop */ }
+    ta.remove();
+    return ok;
+  }
+}
+document.getElementById('ctaShare').addEventListener('click', async () => {
+  if (!sheetKey) return;
+  const ok = await copyText(houseUrl(sheetKey));
+  showCopyToast(ok ? 'Link copied' : 'Could not copy \u2014 long-press the URL instead');
+});
+
 /* ================= step inside: veil + Room3D.enter ================= */
+/* one-time coaching hint after the first step-inside, anchored to the
+ * resident in 3D (via Room3D.residentScreenPos) */
+const coachEl = document.getElementById('coachHint');
+let coachTimer = 0, coachPosTimer = 0;
+function hideCoach() {
+  clearInterval(coachPosTimer); clearTimeout(coachTimer);
+  coachEl.classList.add('hidden');
+}
+function maybeCoachBoop() {
+  let seen = false;
+  try {
+    seen = !!localStorage.getItem('typepop3d_boophint');
+    if (!seen) localStorage.setItem('typepop3d_boophint', '1');
+  } catch (e) { /* private mode: show it this once anyway */ }
+  if (seen) return;
+  coachEl.classList.remove('hidden');
+  clearInterval(coachPosTimer);
+  coachPosTimer = setInterval(() => {
+    if (!roomActive || typeof Room3D.residentScreenPos !== 'function') { hideCoach(); return; }
+    const p = Room3D.residentScreenPos();
+    if (!p) return;
+    coachEl.style.transform =
+      `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px) translate(-50%,-135%)`;
+  }, 120);
+  clearTimeout(coachTimer);
+  coachTimer = setTimeout(hideCoach, 8000);
+}
+
 const veilEl = document.getElementById('interior-veil');
 const uiEl = document.getElementById('ui');
 let running = true;
@@ -832,6 +958,7 @@ function enterInterior(typeKey) {
         getNightF: () => nightF,
       }, () => {
         roomActive = false;
+        hideCoach();
         uiEl.classList.add('on'); // restore city chrome
         veilEl.classList.remove('on');
         if (!running) { running = true; requestAnimationFrame(loop); }
@@ -844,6 +971,7 @@ function enterInterior(typeKey) {
       if (!Room3D.getResident()) {
         toast('Interior opened without its resident — please report this.');
       }
+      maybeCoachBoop();
     } catch (e) {
       roomActive = false;
       uiEl.classList.add('on');
@@ -950,6 +1078,11 @@ function updateLabels() {
 }
 
 /* ================= main loop ================= */
+/* deep link: ?house=<type> skips the intro and flies straight there */
+const deepHouseParam = new URLSearchParams(window.location.search).get('house');
+const deepHouseKey = deepHouseParam && houseByKey(deepHouseParam.toLowerCase())
+  ? deepHouseParam.toLowerCase() : null;
+
 const clock = new THREE.Clock();
 let booted = false;
 function loop() {
@@ -1018,6 +1151,13 @@ function loop() {
     window.__city3d_booted = true;
     document.getElementById('loader').classList.add('done');
     document.getElementById('ui').classList.add('on');
+    if (deepHouseKey) {
+      // deep link: skip the intro, fly straight to the house
+      setTimeout(() => selectHouse(deepHouseKey, { fly: true, sheet: true }), 700);
+    } else {
+      // directory auto-opens shortly after first load
+      setTimeout(() => { if (!sheetKey && !deepHouseKey) openDir(); }, 1500);
+    }
   }
 }
 
