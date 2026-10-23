@@ -1,9 +1,9 @@
 /* TypePop City 3D — city shell (Worker 1).
  *
  * Owns the 3D town, residents, camera, HUD and the step-inside flow.
- * Contract with Worker 2 (interiors): Worker 2 renders into #interior-veil
- * and exposes window.Interior = { enter(typeKey, onExit) }.
- * Our flow: fly-to-door (cutaway path) -> veil on -> Interior.enter(key, onExit)
+ * Contract with the interiors (js/room3d.js): Room3D.enter(typeKey, api, onExit)
+ * reuses our renderer + composer (swaps the RenderPass scene/camera).
+ * Our flow: fly-to-door (cutaway path) -> veil on -> Room3D.enter(key, api, onExit)
  * -> we pause our rAF loop; onExit resumes it.
  */
 import * as THREE from 'three';
@@ -12,6 +12,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js';
+import { BlobRig, updatePuffs } from './blobRig.js';
+import { Room3D } from './room3d.js';
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
@@ -63,7 +65,8 @@ const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
 const composer = new EffectComposer(renderer, rt);
 composer.setPixelRatio(PIXEL_RATIO);
 composer.setSize(window.innerWidth, window.innerHeight);
-composer.addPass(new RenderPass(scene, camera));
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
 // High threshold so only lamps / lit windows / pins bloom.
 const bloom = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.6, 0.85);
@@ -291,37 +294,8 @@ TYPES.forEach((t, i) => {
 });
 const houseByKey = (k) => houses.find((h) => h.key === k);
 
-/* ================= residents (blob billboards + wander AI) ================= */
-const texLoader = new THREE.TextureLoader();
-function fallbackBlobTexture(color) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = color;
-  g.beginPath();
-  g.ellipse(64, 70, 46, 52, 0, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = 'rgba(0,0,0,.55)';
-  g.beginPath(); g.arc(48, 62, 6, 0, Math.PI * 2); g.fill();
-  g.beginPath(); g.arc(80, 62, 6, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 4;
-  g.beginPath(); g.arc(64, 82, 12, 0.3, Math.PI - 0.3); g.stroke();
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-function loadBlobTexture(key, color) {
-  return new Promise((resolve) => {
-    texLoader.load(
-      `../city/assets/blob_${key}_open.png`,
-      (t) => { t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
-      undefined,
-      () => resolve(fallbackBlobTexture(color)) // never leave a resident invisible
-    );
-  });
-}
-
-const residents = []; // {key,type,sprite,pos,state,t,target,targetHouse,visitHouse,chatWith,friends,tagEl,bubbleEl,...}
+/* ================= residents (procedural 3D blob rigs + wander AI) ================= */
+const residents = []; // {key,type,rig,node,pos,state,t,target,targetHouse,visitHouse,chatWith,friends,tagEl,bubbleEl,...}
 function makeResidentDom(t) {
   const tag = document.createElement('div');
   tag.className = 'tag pal';
@@ -382,7 +356,8 @@ function moodFor(r) {
   }
 }
 function updateResident(r, dt, now) {
-  const p = r.sprite.position;
+  const p = r.node.position;
+  // AI state machine; the rig's own animation states are driven below.
   switch (r.state) {
     case 'idle':
       r.t -= dt;
@@ -394,21 +369,31 @@ function updateResident(r, dt, now) {
       if (d < 0.5) { onArrive(r); break; }
       const vx = (dx / d) * r.speed, vz = (dz / d) * r.speed;
       p.x += vx * dt; p.z += vz * dt;
-      r.bob += dt * 9;
-      p.y = 1.2 + Math.abs(Math.sin(r.bob)) * 0.28;
+      r.rig.setFacing(Math.atan2(vx, vz));
       break;
     }
     case 'visit':
       r.t -= dt;
-      p.y = 1.2 + Math.sin(now * 0.002 + r.phase) * 0.08;
       if (r.t <= 0) endVisit(r);
       break;
     case 'chat':
       r.t -= dt;
-      p.y = 1.2 + Math.abs(Math.sin(now * 0.006 + r.phase)) * 0.22; // happy bounce
       if (r.t <= 0) { r.state = 'idle'; r.t = rand(2, 5); r.chatWith = null; }
       break;
   }
+  // Map AI state -> rig animation state (only on change; the rig owns the motion).
+  // At night, idle residents near home settle into sleep.
+  // Chat re-triggers 'happy' every frame: the rig's hop timeline ends in idle,
+  // so this loops the celebration for the whole conversation.
+  if (r.state === 'chat') {
+    r.rig.setState('happy');
+    r._rigState = 'happy';
+  } else {
+    const want = r.state === 'walk' ? 'walk'
+      : (nightF > 0.6 && r.state === 'idle' ? 'sleep' : 'idle');
+    if (r._rigState !== want) { r.rig.setState(want); r._rigState = want; }
+  }
+  r.rig.update(dt, now / 1000);
 }
 function tryMeetings(dt) {
   for (let i = 0; i < residents.length; i++) {
@@ -416,8 +401,8 @@ function tryMeetings(dt) {
       const a = residents[i], b = residents[j];
       if (a.state === 'chat' || b.state === 'chat') continue;
       if (a.state === 'visit' || b.state === 'visit') continue;
-      const dx = a.sprite.position.x - b.sprite.position.x;
-      const dz = a.sprite.position.z - b.sprite.position.z;
+      const dx = a.node.position.x - b.node.position.x;
+      const dz = a.node.position.z - b.node.position.z;
       if (dx * dx + dz * dz > 2.4 * 2.4) continue;
       const pair = a.key < b.key ? a.key + b.key : b.key + a.key;
       if (Math.random() > dt * 0.25) continue; // ~25%/s chance while close
@@ -433,8 +418,8 @@ function tryMeetings(dt) {
       a.friends.add(b.key); b.friends.add(a.key);
       // friendship pin over the nearest house
       let best = houses[0], bd = Infinity;
-      const mx = (a.sprite.position.x + b.sprite.position.x) / 2;
-      const mz = (a.sprite.position.z + b.sprite.position.z) / 2;
+      const mx = (a.node.position.x + b.node.position.x) / 2;
+      const mz = (a.node.position.z + b.node.position.z) / 2;
       for (const h of houses) {
         const d = (h.pos.x - mx) ** 2 + (h.pos.z - mz) ** 2;
         if (d < bd) { bd = d; best = h; }
@@ -630,11 +615,20 @@ el.addEventListener('wheel', (e) => {
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 function handleTap(cx, cy) {
+  if (roomActive) return; // the 3D room owns taps while active
   ndc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(tapTargets, true);
   if (!hits.length) return;
   let o = hits[0].object;
+  // resident boop? (hitProxy carries userData.residentKey)
+  let n = o;
+  while (n && !n.userData.residentKey && !n.userData.houseKey) n = n.parent;
+  if (n && n.userData.residentKey) {
+    const r = residents.find((x) => x.key === n.userData.residentKey);
+    if (r) { r.rig.setState('boop'); r._rigState = 'boop'; }
+    return;
+  }
   while (o && !o.userData.houseKey) o = o.parent;
   if (o) selectHouse(o.userData.houseKey, { fly: true, sheet: true });
 }
@@ -809,7 +803,7 @@ document.getElementById('ctaMeet').addEventListener('click', () => {
   // speech bubble with a one-liner, white pill + colored dot + dark text
   r.bubbleText = `\u201c${r.type.oneLiners[(Math.random() * r.type.oneLiners.length) | 0]}\u201d`;
   r.bubbleUntil = performance.now() + FOCUS_BUBBLE_MS;
-  const p = r.sprite.position;
+  const p = r.node.position;
   flyTo([{
     theta: goal.theta, phi: 0.82, radius: 11,
     look: new THREE.Vector3(p.x, 1.4, p.z), dur: 1.0,
@@ -822,25 +816,37 @@ document.getElementById('secToggle').addEventListener('click', (e) => {
   document.getElementById('shTraits').classList.toggle('open');
 });
 
-/* ================= step inside: veil + Interior.enter ================= */
+/* ================= step inside: veil + Room3D.enter ================= */
 const veilEl = document.getElementById('interior-veil');
+const uiEl = document.getElementById('ui');
 let running = true;
+let roomActive = false; // the 3D room owns the canvas (and taps) while true
 function enterInterior(typeKey) {
-  const I = window.Interior;
-  if (!I || typeof I.enter !== 'function') {
-    toast('Interior module not loaded yet (interior.js) \u2014 the 3D city stays put.');
-    return;
-  }
-  veilEl.classList.add('on');   // CSS fade .6s
+  veilEl.classList.add('on');   // CSS fade .6s (fade to black)
   running = false;              // pause our rAF loop
   setTimeout(() => {
     try {
-      // Signature: Interior.enter(typeKey, onExit). onExit resumes our loop.
-      I.enter(typeKey, () => {
+      // Room3D reuses our renderer + composer (swaps the RenderPass scene/camera).
+      Room3D.enter(typeKey, {
+        renderer, composer, renderPass,
+        getNightF: () => nightF,
+      }, () => {
+        roomActive = false;
+        uiEl.classList.add('on'); // restore city chrome
         veilEl.classList.remove('on');
         if (!running) { running = true; requestAnimationFrame(loop); }
       });
+      roomActive = true;
+      uiEl.classList.remove('on'); // hide city chrome while inside (frozen tags otherwise)
+      // Crossfade: veil fades back out, revealing the 3D room underneath.
+      requestAnimationFrame(() => requestAnimationFrame(() => veilEl.classList.remove('on')));
+      // Hard check per the user's beat: the resident is the payoff of the click.
+      if (!Room3D.getResident()) {
+        toast('Interior opened without its resident — please report this.');
+      }
     } catch (e) {
+      roomActive = false;
+      uiEl.classList.add('on');
       toast('Interior failed to open: ' + (e.message || e));
       veilEl.classList.remove('on');
       running = true;
@@ -930,15 +936,15 @@ function updateLabels() {
   for (const h of houses) placeEl(h.tagEl, h.pos.x, h.roofTopY + 1.5, h.pos.z, showHouses);
   const now = performance.now();
   for (const r of residents) {
-    const p = r.sprite.position;
-    placeEl(r.tagEl, p.x, 2.85, p.z, showPals);
+    const p = r.node.position;
+    placeEl(r.tagEl, p.x, 2.2, p.z, showPals);
     // speech bubble: white pill, colored dot, dark text
     let text = null;
     if (r.state === 'visit') text = `Visiting ${typeByKey(r.visitHouse).palName}\u2026`;
     else if (r.state === 'chat') text = `Chatting with ${typeByKey(r.chatWith).palName}`;
     else if (focusKey === r.key && now < r.bubbleUntil) text = r.bubbleText;
     if (text && text !== r.bubbleShown) { r.txt.textContent = text; r.bubbleShown = text; }
-    placeEl(r.bub, p.x, 4.1, p.z, !!text && showPals);
+    placeEl(r.bub, p.x, 3.15, p.z, !!text && showPals);
     if (!text) r.bubbleShown = null;
   }
 }
@@ -972,7 +978,7 @@ function loop() {
   if (focusKey && !flight) {
     const r = residents.find((x) => x.key === focusKey);
     if (r) {
-      const p = r.sprite.position;
+      const p = r.node.position;
       goal.look.x += (p.x - goal.look.x) * Math.min(1, dt * 3);
       goal.look.z += (p.z - goal.look.z) * Math.min(1, dt * 3);
       goal.look.y += (1.4 - goal.look.y) * Math.min(1, dt * 3);
@@ -981,6 +987,7 @@ function loop() {
   applyCam();
 
   for (const r of residents) updateResident(r, dt, now);
+  updatePuffs(dt); // shared dust-puff pool for the blob rigs
   tryMeetings(dt);
   updatePins(dt, now);
 
@@ -1023,35 +1030,36 @@ window.addEventListener('resize', () => {
 });
 
 /* ================= init ================= */
-async function init() {
+function init() {
   initFireflies();
-  // residents need their sprites before the loop starts
-  const jobs = TYPES.map(async (t) => {
-    const tex = await loadBlobTexture(t.key, t.color);
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(2.4, 2.4, 1);
+  // residents are procedural 3D rigs now — built synchronously, no texture waits
+  for (const t of TYPES) {
+    const rig = new BlobRig({ bodyColor: t.color });
     const start = residentHomePos(t.key);
-    sprite.position.set(start.x, 1.2, start.z);
-    scene.add(sprite);
+    rig.group.position.set(start.x, 0, start.z);
+    scene.add(rig.group);
+    rig.hitProxy.userData.residentKey = t.key;
+    tapTargets.push(rig.hitProxy);
     const dom = makeResidentDom(t);
     residents.push({
-      key: t.key, type: t, sprite,
+      key: t.key, type: t, rig, node: rig.group,
       state: 'idle', t: rand(0.5, 5),
       target: new THREE.Vector3(), targetHouse: null,
       visitHouse: null, chatWith: null,
-      friends: new Set(), speed: 2.4, bob: rand(0, 6), phase: rand(0, 6),
+      friends: new Set(), speed: 2.4, phase: rand(0, 6),
       tagEl: dom.tag, bub: dom.bub, txt: dom.txt,
       bubbleText: null, bubbleShown: null, bubbleUntil: 0,
+      _rigState: null,
     });
-  });
-  await Promise.all(jobs);
+  }
   // sheet live-status refresh (MOOD NOW / FRIENDS)
   setInterval(refreshSheetLive, 1000);
   applyCam();
   requestAnimationFrame(loop);
 }
-init().catch((e) => {
+try {
+  init();
+} catch (e) {
   toast('Failed to start the city: ' + (e.message || e));
   console.error(e);
-});
+}
