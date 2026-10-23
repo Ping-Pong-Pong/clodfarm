@@ -33,7 +33,7 @@
 
 import * as THREE from 'three';
 import { BlobRig } from './blobRig.js';
-import { typeByKey } from './types.js?v=2';
+import { typeByKey } from './types.js?v=3';
 
 /* ------------------------------------------------------------------ */
 /* tuning knobs (integrator-facing)                                    */
@@ -532,7 +532,7 @@ function buildRoom(typeKey) {
   scene.add(prop);
 
   /* ---- resident: BlobRig, built synchronously — room is NEVER empty ---- */
-  const rig = new BlobRig({ bodyColor: type.color });
+  const rig = new BlobRig({ fruit: type.fruit });
   rig.group.position.set(0.5, 0, 0.8); // center rug
   // face the room camera's start position
   rig.setFacing(Math.atan2(KNOBS.camPos[0] - 0.5, KNOBS.camPos[2] - 0.8));
@@ -694,9 +694,12 @@ function _enter(typeKey, api, onExit) {
   };
   window.addEventListener('resize', st.onResize);
 
-  /* ---- arrival beat: one greeting hop ~0.8s after the transition ---- */
+  /* ---- arrival beat: one greeting hop ~0.8s after the transition,
+         plus a greeting speech bubble (white pill, colored dot, dark text) ---- */
   st.timers.push(setTimeout(() => {
-    if (active === st) room.rig.setState('happy');
+    if (active !== st) return;
+    room.rig.setState('happy');
+    _showGreeting(st, type);
   }, KNOBS.arrivalBeatMs));
   /* wander unlocks after the greeting so the beat reads cleanly */
   st.timers.push(setTimeout(() => {
@@ -800,10 +803,28 @@ function _update(st, dt, t) {
     * (1 + 0.08 * Math.sin(t * 0.9)); // subtle breathing
 }
 
+/** Room-entry greeting bubble: random per-type greeting shown with the
+ *  greeting hop, auto-hides after a few seconds. Reuses the white-pill /
+ *  colored-dot / dark-text bubble language. */
+function _showGreeting(st, type) {
+  const el = document.getElementById('greetBubble');
+  if (!el || !type.greetings || !type.greetings.length) return;
+  const g = type.greetings[(Math.random() * type.greetings.length) | 0];
+  el.innerHTML =
+    `<span class="dot" style="background:${type.color}"></span>` +
+    `<span>\u201c${g}\u201d</span>`;
+  el.classList.add('show');
+  st.timers.push(setTimeout(() => {
+    if (active === st) el.classList.remove('show');
+  }, 4500));
+}
+
 function _exit(silent) {
   const st = active;
   if (!st) return;
   active = null;
+  const gb = document.getElementById('greetBubble');
+  if (gb) gb.classList.remove('show');
   cancelAnimationFrame(st.raf);
   _stopTimers(st);
   _detach(st);
