@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>TypePop City · 3D</title>
-<link rel="stylesheet" href="./style.css?v=1">
+<link rel="stylesheet" href="./style.css?v=2">
 <script type="importmap">
 {
   "imports": {
@@ -18,8 +18,8 @@
 <div id="app"></div>
 
 <div id="loader">
-  <div class="blob"></div>
-  <p>Raising the city&hellip;</p>
+  <p class="l-line">Waking the town&hellip;</p>
+  <p class="l-word">typepop</p>
 </div>
 
 <div id="ui">
@@ -35,7 +35,7 @@
     </div>
   </div>
 
-  <div class="hint">Drag to turn &middot; Scroll to ride &middot; Click a house to step in</div>
+  <div class="hint">Drag to turn &middot; Scroll to zoom &middot; Tap a house to step in</div>
 
   <div id="rail" aria-label="House selector">
     <button class="chev" id="railUp" aria-label="Previous house">&#9650;</button>
@@ -47,13 +47,15 @@
 
   <div id="directory" class="closed" aria-hidden="true">
     <div class="dir-head"><span>HOUSE DIRECTORY</span><button id="dirClose" aria-label="Close directory">&#10005;</button></div>
-    <div class="dir-grid" id="dirGrid"></div>
+    <input id="dirSearch" type="search" placeholder="Find a resident" autocomplete="off" aria-label="Find a resident">
+    <div class="dir-list" id="dirList"></div>
   </div>
 
   <div id="sheetBackdrop"></div>
   <aside id="sheet" aria-hidden="true">
     <div class="grab" id="sheetGrab"></div>
     <div class="eyebrow" id="shEyebrow">HOUSE 01 &middot; ENFP</div>
+    <p class="doing" id="shDoing"></p>
     <div class="who">
       <img id="shAvatar" alt="Resident blob">
       <div>
@@ -64,6 +66,7 @@
     <div class="ctas">
       <button id="ctaStep" class="cta primary">Step inside</button>
       <button id="ctaMeet" class="cta">Meet the resident</button>
+      <button id="ctaShare" class="cta" aria-label="Copy link to this house">Share</button>
     </div>
     <div class="sheet-sec">
       <button class="sec-toggle" id="secToggle">AT HOME <span>&#9662;</span></button>
@@ -82,6 +85,8 @@
 <div id="interior-veil"></div>
 
 <div id="errtoast"></div>
+<div id="copytoast" role="status"></div>
+<div id="coachHint" class="hidden">Tap the resident to boop &middot; Drag to look around</div>
 
 <script>
 /* surface runtime errors on-screen so a phone failure is diagnosable */
@@ -104,6 +109,6 @@ setTimeout(function () {
 }, 12000);
 </script>
 
-<script type="module" src="./js/main.js?v=2"></script>
+<script type="module" src="./js/main.js?v=3"></script>
 </body>
 </html>
