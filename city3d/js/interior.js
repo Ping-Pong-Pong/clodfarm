@@ -812,3 +812,6 @@ function escapeHtml(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[ch]);
 }
+
+// Expose for the city shell (loaded as a bare module script): main.js calls window.Interior.enter().
+globalThis.Interior = Interior;
