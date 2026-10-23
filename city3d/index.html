@@ -57,7 +57,7 @@
     <div class="eyebrow" id="shEyebrow">HOUSE 01 &middot; ENFP</div>
     <p class="doing" id="shDoing"></p>
     <div class="who">
-      <img id="shAvatar" alt="Resident blob">
+      <span id="shAvatar" class="fruit-chip" role="img" aria-label="Resident fruit blob"></span>
       <div>
         <h2 id="shTitle"></h2>
         <p id="shDesc"></p>
@@ -87,6 +87,7 @@
 <div id="errtoast"></div>
 <div id="copytoast" role="status"></div>
 <div id="coachHint" class="hidden">Tap the resident to boop &middot; Drag to look around</div>
+<div id="greetBubble" aria-live="polite"></div>
 
 <script>
 /* surface runtime errors on-screen so a phone failure is diagnosable */
@@ -109,6 +110,6 @@ setTimeout(function () {
 }, 12000);
 </script>
 
-<script type="module" src="./js/main.js?v=3"></script>
+<script type="module" src="./js/main.js?v=4"></script>
 </body>
 </html>
