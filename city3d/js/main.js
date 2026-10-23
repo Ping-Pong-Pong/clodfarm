@@ -11,7 +11,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { TYPES, typeByKey } from './types.js?v=2';
+import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs } from './blobRig.js';
 import { Room3D } from './room3d.js?v=2';
 
@@ -650,6 +650,21 @@ let sheetKey = null;
 let focusKey = null; // resident the camera is glued to ("Meet the resident")
 const FOCUS_BUBBLE_MS = 12000;
 
+/** Draw a speech line from the resident's shuffle bag (refills + reshuffles
+ *  when exhausted so lines never repeat back-to-back). Falls back to the
+ *  legacy oneLiners pool if `lines` is absent. */
+function nextLine(r) {
+  const pool = (r.type.lines && r.type.lines.length) ? r.type.lines : r.type.oneLiners;
+  if (!r.lineBag.length) {
+    r.lineBag = pool.slice();
+    for (let i = r.lineBag.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = r.lineBag[i]; r.lineBag[i] = r.lineBag[j]; r.lineBag[j] = tmp;
+    }
+  }
+  return r.lineBag.pop();
+}
+
 function traitsFor(t) {
   return [
     `Keeps a ${t.prop} by the front door`,
@@ -669,7 +684,10 @@ function openSheet(key) {
   sheetKey = key;
   document.getElementById('shEyebrow').textContent =
     `HOUSE ${String(h.idx + 1).padStart(2, '0')} \u00b7 ${t.name}`;
-  document.getElementById('shAvatar').src = `../city/assets/blob_${t.key}_open.png`;
+  const av = document.getElementById('shAvatar');
+  av.textContent = t.emoji || '\ud83c\udf53';
+  av.style.background = t.color + '26'; // ~15% type-color tint
+  av.style.borderColor = t.color;
   document.getElementById('shTitle').textContent = t.nickname;
   document.getElementById('shDesc').textContent =
     `${t.palName}, the ${t.nickname.toLowerCase()} of the block \u2014 rarely seen without a ${t.prop}.`;
@@ -795,13 +813,13 @@ function buildDirRows(filter = '') {
   dirList.innerHTML = '';
   const q = filter.trim().toLowerCase();
   TYPES.forEach((t, i) => {
-    const hay = `${t.name} ${t.nickname} ${t.palName}`.toLowerCase();
+    const hay = `${t.name} ${t.nickname} ${t.palName} ${t.fruit}`.toLowerCase();
     if (q && !hay.includes(q)) return;
     const row = document.createElement('button');
     row.className = 'dir-row';
     row.innerHTML =
       `<span class="num">${String(i + 1).padStart(2, '0')}</span>` +
-      `<span class="sw" style="background:${t.color}"></span>` +
+      `<span class="dir-emoji">${t.emoji || ''}</span>` +
       `<span class="code">${t.name}</span><span class="nick">${t.nickname}</span>`;
     row.setAttribute('aria-label', `Fly to the ${t.name} house`);
     row.addEventListener('click', () => {
@@ -862,7 +880,8 @@ document.getElementById('ctaMeet').addEventListener('click', () => {
   focusKey = key;
   syncOverview();
   // speech bubble with a one-liner, white pill + colored dot + dark text
-  r.bubbleText = `\u201c${r.type.oneLiners[(Math.random() * r.type.oneLiners.length) | 0]}\u201d`;
+  // (shuffle bag: no repeats until the resident has said everything once)
+  r.bubbleText = `\u201c${nextLine(r)}\u201d`;
   r.bubbleUntil = performance.now() + FOCUS_BUBBLE_MS;
   const p = r.node.position;
   flyTo([{
@@ -1174,7 +1193,7 @@ function init() {
   initFireflies();
   // residents are procedural 3D rigs now — built synchronously, no texture waits
   for (const t of TYPES) {
-    const rig = new BlobRig({ bodyColor: t.color });
+    const rig = new BlobRig({ fruit: t.fruit });
     const start = residentHomePos(t.key);
     rig.group.position.set(start.x, 0, start.z);
     scene.add(rig.group);
@@ -1189,6 +1208,7 @@ function init() {
       friends: new Set(), speed: 2.4, phase: rand(0, 6),
       tagEl: dom.tag, bub: dom.bub, txt: dom.txt,
       bubbleText: null, bubbleShown: null, bubbleUntil: 0,
+      lineBag: [], // shuffle bag of speech lines — no repeats until exhausted
       _rigState: null,
     });
   }
