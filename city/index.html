@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#4f6b25">
+<title>TypePop City — a living MBTI town</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><ellipse cx='16' cy='19' rx='12' ry='11' fill='%23FF8C69'/><circle cx='11' cy='17' r='2' fill='%23231815'/><circle cx='21' cy='17' r='2' fill='%23231815'/></svg>">
+<link rel="preload" href="fonts.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script src="city.js" defer></script>
+</head>
+<body>
+<canvas id="world" aria-hidden="true"></canvas>
+<div id="labels" aria-hidden="true"></div>
+
+<div class="hud-top" id="hud-top">
+  <div class="chip city-chip" id="city-chip">🏠 <b>TypePop City</b></div>
+  <div class="chip stats" id="stats">👥 16 · 📅 Day 1 · ✨ 0</div>
+</div>
+
+<nav class="dock" id="dock" aria-label="City actions">
+  <button type="button" class="tool" data-act="residents" aria-label="Residents"><span class="emo" aria-hidden="true">🧑‍🤝‍🧑</span><span class="lbl">RESIDENTS</span></button>
+  <button type="button" class="tool" data-act="houses" aria-label="Houses"><span class="emo" aria-hidden="true">🏘️</span><span class="lbl">HOUSES</span></button>
+  <button type="button" class="tool" data-act="daynight" id="dn-tool" aria-label="Toggle day and night"><span class="emo" id="dn-emo" aria-hidden="true">☀️</span><span class="lbl" id="dn-lbl">AUTO</span></button>
+  <button type="button" class="tool" data-act="about" aria-label="About"><span class="emo" aria-hidden="true">❓</span><span class="lbl">ABOUT</span></button>
+</nav>
+
+<!-- bottom sheet: residents / houses / about panels -->
+<div id="sheet" class="sheet" hidden role="dialog" aria-modal="false">
+  <div class="sheet-head"><h2 id="sheet-title">RESIDENTS</h2><button class="x" type="button" data-close aria-label="Close">✕</button></div>
+  <div id="sheet-body"></div>
+</div>
+
+<!-- bottom sheet: resident / house info card -->
+<div id="card" class="sheet card-sheet" hidden role="dialog" aria-modal="false">
+  <div class="sheet-head"><h2 id="card-title">Pip</h2><button class="x" type="button" data-close aria-label="Close">✕</button></div>
+  <div id="card-body"></div>
+</div>
+
+</body>
+</html>
