@@ -76,8 +76,9 @@
   </aside>
 </div>
 
-<!-- Worker 2 (interiors) renders into this overlay and exposes
-     window.Interior = { enter(typeKey, onExit) }. -->
+<!-- Full-3D interiors live in js/room3d.js (imported by main.js).
+     The old 2D-background path (js/interior.js, js/interior-fx.js) is unwired
+     but kept in the folder for reference. -->
 <div id="interior-veil"></div>
 
 <div id="errtoast"></div>
@@ -103,8 +104,6 @@ setTimeout(function () {
 }, 12000);
 </script>
 
-<!-- interior.js is owned by Worker 2; it must attach window.Interior -->
-<script type="module" src="./js/interior.js?v=1"></script>
-<script type="module" src="./js/main.js?v=1"></script>
+<script type="module" src="./js/main.js?v=2"></script>
 </body>
 </html>
