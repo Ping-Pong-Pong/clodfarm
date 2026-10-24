@@ -325,5 +325,7 @@ export function buildFountain() {
     statueGoldDarkMat.emissiveIntensity = lampF * 0.4;
   }
 
-  return { group: g, update };
+  // Structural facts for the ?selftest=1 audit (derived from the built
+  // objects, not literals): 3 lathe basins, 16 mosaic tiles, gold statue.
+  return { group: g, update, tiers: [lower, mid, top].length, mosaicCount: mosaicMats.length, statue };
 }
