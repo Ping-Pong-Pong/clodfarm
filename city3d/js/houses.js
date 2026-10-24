@@ -70,9 +70,11 @@ function rboxGeo(w, h, d, r) {
     _rboxCache.set(key, new RoundedBoxGeometry(w, h, d, 2, rad));
   return _rboxCache.get(key);
 }
-/** Rounded-box twin of put(): same positioning, soft corners. o.r = radius (default 0.14). */
+/** Rounded-box twin of put(): same positioning, soft corners. o.r = radius (default 0.22).
+ *  The default only affects main volumes: thin pieces either pass explicit
+ *  small r or are protected by rboxGeo's 0.45*min-dimension clamp. */
 function rput(parent, mat, x = 0, y = 0, z = 0, w = 1, h = 1, d = 1, o = {}) {
-  const m = new THREE.Mesh(rboxGeo(w, h, d, o.r !== undefined ? o.r : 0.14), mat);
+  const m = new THREE.Mesh(rboxGeo(w, h, d, o.r !== undefined ? o.r : 0.22), mat);
   m.position.set(x, y, z);
   if (o.ry) m.rotation.y = o.ry;
   if (o.rx) m.rotation.x = o.rx;
