@@ -3,11 +3,12 @@
  * Replaces the old grey single-basin fountain with a tiered centerpiece:
  *  - 3 stacked lathe-profile basins in warm sandstone (not grey)
  *  - a mosaic tile band around the lower basin in all 16 type colors
+ *    (large, saturation-boosted tiles; emissive lift at night)
  *  - animated water: scrolling procedural texture + opacity pulse
  *  - a falling-water Points spray (gravity arc, top tier -> lower basin)
  *  - expanding ripple rings on the lower basin
- *  - a stone statue of Pip the strawberry (frozen mid-hop BlobRig) on top,
- *    with a gold trim ring on its pedestal
+ *  - a GOLD statue of Pip the strawberry (frozen mid-hop BlobRig, 2.0x
+ *    scale) on a widened pedestal, with a gold trim ring + night emissive
  *  - flower ring + stone edging around the base
  *  - night: water glows softly, mosaic tiles catch the light
  *
@@ -24,6 +25,9 @@ import { BlobRig } from './blobRig.js?v=2';
 const stoneMat = new THREE.MeshStandardMaterial({ color: 0xc9b294, roughness: 0.9 });
 const stoneDark = new THREE.MeshStandardMaterial({ color: 0xa98f68, roughness: 0.95 });
 const goldMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, metalness: 0.75, roughness: 0.35 });
+// Gold statue materials (module scope so the night update can lift emissive).
+const statueGoldMat = new THREE.MeshStandardMaterial({ color: 0xe0aa3e, metalness: 0.8, roughness: 0.3, emissive: 0x7a5a10, emissiveIntensity: 0 });
+const statueGoldDarkMat = new THREE.MeshStandardMaterial({ color: 0xb8862e, metalness: 0.7, roughness: 0.4, emissive: 0x7a5a10, emissiveIntensity: 0 });
 
 function radialSpriteTex() {
   const c = document.createElement('canvas');
@@ -83,31 +87,36 @@ function waterTexture() {
   return t;
 }
 
-/** Pip the strawberry as a stone statue, frozen mid-hop (the happy apex).
+/** Pip the strawberry as a GOLD statue, frozen mid-hop (the happy apex).
  *  The rig is stepped manually to the airborne frame, then its materials
- *  are swapped to stone — it never animates again. */
+ *  are swapped to metallic gold — it never animates again. Scaled 2.0x
+ *  (up from 1.35x) so it pops against water/sandstone at plaza distance.
+ *  Returns the group with userData.statueBottom/statueTop measured from
+ *  the frozen pose (group-local units), so the jet + halo seat exactly. */
 function buildStatue() {
   const rig = new BlobRig({ fruit: 'strawberry' });
   rig.setState('happy');
   let t = 0;
   for (let i = 0; i < 40; i++) { t += 0.016; rig.update(0.016, t); } // ~apex of the hop
-  const stone = new THREE.MeshStandardMaterial({ color: 0xd8c9a8, roughness: 0.85 });
-  const stoneDk = new THREE.MeshStandardMaterial({ color: 0xb09a72, roughness: 0.9 });
   const slate = new THREE.MeshStandardMaterial({ color: 0x2a2620, roughness: 0.6 });
   const marble = new THREE.MeshStandardMaterial({ color: 0xfff8e8, roughness: 0.4 });
-  rig.body.material = stone;
-  if (rig.features) rig.features.material = stoneDk;
+  rig.body.material = statueGoldMat;
+  if (rig.features) rig.features.material = statueGoldDarkMat;
   rig.eyeL.material = slate;
   rig.eyeR.material = slate;
   rig.hlL.material = marble;
   rig.hlR.material = marble;
-  if (rig.armL) rig.armL.material = stone;
-  if (rig.armR) rig.armR.material = stone;
-  rig.footL.material = stoneDk;
-  rig.footR.material = stoneDk;
+  if (rig.armL) rig.armL.material = statueGoldMat;
+  if (rig.armR) rig.armR.material = statueGoldMat;
+  rig.footL.material = statueGoldDarkMat;
+  rig.footR.material = statueGoldDarkMat;
   rig.shadow.visible = false;
   rig.hitProxy.visible = false;
-  rig.group.scale.setScalar(1.35);
+  rig.group.scale.setScalar(2.0);
+  rig.group.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(rig.body);
+  rig.group.userData.statueBottom = Number.isFinite(bb.min.y) ? bb.min.y : 1.4;
+  rig.group.userData.statueTop = Number.isFinite(bb.max.y) ? bb.max.y : 4.6;
   return rig.group;
 }
 
@@ -151,15 +160,19 @@ export function buildFountain() {
   top.receiveShadow = true;
   g.add(top);
 
-  /* ---- mosaic tile band: all 16 type colors around the lower basin ---- */
+  /* ---- mosaic tile band: all 16 type colors around the lower basin ----
+   *  Tiles enlarged (0.95 wide ≈ the 1.03 spacing, so the band reads as a
+   *  near-continuous color ring at plaza distance) and saturation-boosted. */
   for (let i = 0; i < TYPES.length; i++) {
     const a = (i / TYPES.length) * Math.PI * 2;
+    const c = new THREE.Color(TYPES[i].color);
+    c.offsetHSL(0, 0.22, 0.03); // saturation lift for distance readability
     const mat = new THREE.MeshStandardMaterial({
-      color: TYPES[i].color, emissive: TYPES[i].color, emissiveIntensity: 0,
-      roughness: 0.55,
+      color: c, emissive: c, emissiveIntensity: 0,
+      roughness: 0.35,
     });
-    const tile = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.42, 0.07), mat);
-    const r = 2.62;
+    const tile = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.55, 0.10), mat);
+    const r = 2.64;
     tile.position.set(Math.cos(a) * r, 0.78, Math.sin(a) * r);
     tile.rotation.y = -a + Math.PI / 2;
     tile.castShadow = false;
@@ -224,12 +237,14 @@ export function buildFountain() {
     ripples.push({ ring, mat, phase: i / 3 });
   }
 
-  /* ---- statue: Pip on a pedestal with a gold trim ring ---- */
-  const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 0.3, 18), stoneMat);
+  /* ---- statue: gold Pip on a pedestal with a gold trim ring ----
+   *  Pedestal widened to suit the 2.0x statue; the water jet is seated
+   *  from the measured frozen pose so it always meets the blob's underside. */
+  const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.8, 0.3, 18), stoneMat);
   ped.position.y = 3.85;
   ped.castShadow = true;
   g.add(ped);
-  const pedTrim = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.05, 8, 24), goldMat);
+  const pedTrim = new THREE.Mesh(new THREE.TorusGeometry(0.67, 0.05, 8, 24), goldMat);
   pedTrim.rotation.x = Math.PI / 2;
   pedTrim.position.y = 3.72;
   g.add(pedTrim);
@@ -239,8 +254,10 @@ export function buildFountain() {
   // The statue is frozen mid-hop, so its feet hover above the pedestal.
   // A translucent water jet rising from the pedestal to the blob's underside
   // explains the float — Pip is held up by the fountain itself.
-  const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 1.15, 10), waterMat);
-  jet.position.y = 4.58;
+  const sBot = statue.userData.statueBottom ?? 1.4;
+  const jetH = sBot + 0.15; // pedestal top (4.0) up into the blob's underside
+  const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.26, jetH, 10), waterMat);
+  jet.position.y = 4.0 + jetH / 2;
   g.add(jet);
 
   /* ---- flower ring + stone edging around the base ---- */
@@ -273,8 +290,9 @@ export function buildFountain() {
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const glow = new THREE.Sprite(glowMat);
-  glow.position.set(0, 4.6, 0);
-  glow.scale.set(4.5, 4.5, 1);
+  const sTop = statue.userData.statueTop ?? 4.6;
+  glow.position.set(0, 4.0 + sTop + 0.5, 0); // halo above the enlarged statue
+  glow.scale.set(6, 6, 1);
   g.add(glow);
 
   /* ---- per-frame animation ---- */
@@ -299,10 +317,12 @@ export function buildFountain() {
       r.ring.scale.set(s, s, 1);
       r.mat.opacity = (1 - u) * 0.45;
     }
-    // night: water glows, mosaic catches light, statue halo appears
+    // night: water glows, mosaic band + gold statue catch the light, halo appears
     waterMat.emissiveIntensity = lampF * 0.55;
     glowMat.opacity = lampF * 0.35;
-    for (const m of mosaicMats) m.emissiveIntensity = lampF * 0.3;
+    for (const m of mosaicMats) m.emissiveIntensity = lampF * 0.8;
+    statueGoldMat.emissiveIntensity = lampF * 0.5;
+    statueGoldDarkMat.emissiveIntensity = lampF * 0.4;
   }
 
   return { group: g, update };
