@@ -12,8 +12,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js?v=3';
-import { BlobRig, updatePuffs } from './blobRig.js?v=2';
+import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=1';
+import { buildHouseExterior } from './houses.js?v=1';
 import { Room3D } from './room3d.js?v=2';
 
 /* ================= boot / diagnostics ================= */
@@ -210,54 +211,57 @@ for (let i = 0; i < 8; i++) {
   head.position.set(x, 3.15, z);
   scene.add(pole, head);
 }
+// 8 more street lamps on the ring path, halfway between adjacent houses
+// (r≈26). No new real point lights — one shared additive glow sprite each.
+const lampGlowTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const grad = x.createRadialGradient(32, 32, 2, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,205,120,0.9)');
+  grad.addColorStop(0.4, 'rgba(255,180,90,0.35)');
+  grad.addColorStop(1, 'rgba(255,170,80,0)');
+  x.fillStyle = grad; x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const lampGlowMat = new THREE.SpriteMaterial({
+  map: lampGlowTex, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+for (let i = 0; i < 8; i++) {
+  const a = ((i + 0.5) / 16) * Math.PI * 2; // halfway between house angles
+  const x = Math.cos(a) * 25, z = Math.sin(a) * 25;
+  const pole = new THREE.Mesh(lampPoleGeo, lampPoleMat);
+  pole.position.set(x, 1.5, z); pole.castShadow = true;
+  const head = new THREE.Mesh(lampHeadGeo, lampHeadMat);
+  head.position.set(x, 3.15, z);
+  const glow = new THREE.Sprite(lampGlowMat);
+  glow.position.set(x, 3.15, z);
+  glow.scale.set(3.2, 3.2, 1);
+  scene.add(pole, head, glow);
+}
 
 /* ================= houses ================= */
 const RING_R = 26;
-const bodyGeo = new THREE.BoxGeometry(6, 4, 5);
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf3e7d3, roughness: 0.9 });
-const doorGeo = new THREE.BoxGeometry(1.3, 2.4, 0.18);
-const doorMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.85 });
-const winGeo = new THREE.PlaneGeometry(1.1, 1.1);
 const hitGeo = new THREE.BoxGeometry(10, 10, 10);
 const hitMat = new THREE.MeshBasicMaterial({
   transparent: true, opacity: 0, depthWrite: false, colorWrite: false,
 });
-const triShape = new THREE.Shape();
-triShape.moveTo(-3.5, 0); triShape.lineTo(3.5, 0); triShape.lineTo(0, 2.5); triShape.closePath();
-const roofGeo = new THREE.ExtrudeGeometry(triShape, { depth: 5.7, bevelEnabled: false });
-roofGeo.translate(0, 0, -2.85);
 
-const houses = [];       // {key, idx, type, group, pos, angle, doorPos, doorTheta, roofTopY, winMats}
+const houses = [];       // {key, idx, type, group, pos, angle, doorPos, doorTheta, roofTopY, winMats, nightGlow, winTint, smokeTip, tagEl}
 const tapTargets = [];   // hit boxes + pin groups for raycast
 const tagsRoot = document.getElementById('tags');
 
 TYPES.forEach((t, i) => {
   const a = (i / TYPES.length) * Math.PI * 2;
   const pos = new THREE.Vector3(Math.cos(a) * RING_R, 0, Math.sin(a) * RING_R);
-  const g = new THREE.Group();
+  // Personality-distinct exterior (see js/houses.js). Local +z is the front.
+  const ext = buildHouseExterior(t.key);
+  const g = ext.group;
   g.position.copy(pos);
   g.rotation.y = Math.atan2(-Math.cos(a), -Math.sin(a)); // front (+z) faces plaza
-
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = 2; body.castShadow = true; body.receiveShadow = true;
-  const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({
-    color: new THREE.Color(t.color), roughness: 0.7, flatShading: true,
-  }));
-  roof.position.y = 4; roof.castShadow = true;
-  const door = new THREE.Mesh(doorGeo, doorMat);
-  door.position.set(0, 1.2, 2.56);
-  g.add(body, roof, door);
-
-  const winMats = [];
-  [-1.75, 1.75].forEach((wx) => {
-    const wm = new THREE.MeshStandardMaterial({
-      color: 0x3a2c1c, emissive: 0xffd27a, emissiveIntensity: 0.25, roughness: 0.4,
-    });
-    const w = new THREE.Mesh(winGeo, wm);
-    w.position.set(wx, 2.3, 2.52);
-    g.add(w);
-    winMats.push(wm);
-  });
   scene.add(g);
 
   // radial path from ring path to the door
@@ -287,12 +291,16 @@ TYPES.forEach((t, i) => {
     angle: a,
     doorPos,
     doorTheta: Math.atan2(dirC.x, dirC.z),
-    roofTopY: 6.6,
-    winMats,
+    roofTopY: ext.roofTopY,
+    winMats: ext.winMats,
+    nightGlow: ext.nightGlow,
+    winTint: ext.winTint,
+    smokeTip: ext.smokeTip || null,
     tagEl: tag,
   });
 });
 const houseByKey = (k) => houses.find((h) => h.key === k);
+let smokeTick = 0; // chimney-smoke timer (cozy houses, daytime only)
 
 /* ================= residents (procedural 3D blob rigs + wander AI) ================= */
 const residents = []; // {key,type,rig,node,pos,state,t,target,targetHouse,visitHouse,chatWith,friends,tagEl,bubbleEl,...}
@@ -313,10 +321,22 @@ function residentHomePos(key) {
   const h = houseByKey(key);
   return h.doorPos.clone().add(new THREE.Vector3(rand(-2, 2), 0, rand(-2, 2)));
 }
+/* Per-type behavior quirks (multipliers on the shared wander AI). */
+const BEHAVIOR = {
+  estp: { speed: 1.5 },            // the daredevil hurries everywhere
+  enfp: { speed: 1.2 },            // bouncy hype
+  isfj: { speed: 0.7 },            // unhurried defender
+  enfj: { visit: 0.7 },            // cheerleader visits others often
+  intj: { visit: 0.05, homeBias: 0.8 }, // chess player rarely leaves home
+};
+const behaviorOf = (key) => BEHAVIOR[key] || {};
 function pickTarget(r) {
   r.targetHouse = null; r.visitHouse = null;
-  if (Math.random() < 0.38) {
-    const h = houses[(Math.random() * houses.length) | 0];
+  const bh = behaviorOf(r.key);
+  if (Math.random() < (bh.visit !== undefined ? bh.visit : 0.38)) {
+    let h;
+    if (bh.homeBias && Math.random() < bh.homeBias) h = houseByKey(r.key);
+    else h = houses[(Math.random() * houses.length) | 0];
     r.targetHouse = h.key;
     r.target.copy(h.doorPos).add(new THREE.Vector3(rand(-2.5, 2.5), 0, rand(-1, 2.5)));
   } else {
@@ -324,9 +344,17 @@ function pickTarget(r) {
     r.target.set(Math.cos(a) * rad, 0, Math.sin(a) * rad);
   }
   r.state = 'walk';
-  r.speed = rand(2.0, 2.8);
+  r.speed = rand(2.0, 2.8) * (bh.speed || 1);
 }
 function onArrive(r) {
+  // INTP occasionally stops to stargaze (💭 shows when focused).
+  if (r.key === 'intp' && Math.random() < 0.25) {
+    r.state = 'stargaze';
+    r.t = rand(4, 6);
+    r.bubbleText = '💭';
+    r.bubbleUntil = performance.now() + r.t * 1000;
+    return;
+  }
   if (r.targetHouse && r.targetHouse !== r.key && Math.random() < 0.4) {
     r.state = 'visit';
     r.visitHouse = r.targetHouse;
@@ -352,6 +380,7 @@ function moodFor(r) {
         : 'Wandering the lanes';
     case 'visit': return `Visiting ${typeByKey(r.visitHouse).palName}`;
     case 'chat': return `Chatting with ${typeByKey(r.chatWith).palName}`;
+    case 'stargaze': return 'Stargazing 💭';
     default: return r._rigState === 'sleep' ? 'Dreaming the night away' : 'Lounging at home';
   }
 }
@@ -375,6 +404,10 @@ function updateResident(r, dt, now) {
     case 'visit':
       r.t -= dt;
       if (r.t <= 0) endVisit(r);
+      break;
+    case 'stargaze': // INTP quirk: stands still, lost in thought
+      r.t -= dt;
+      if (r.t <= 0) { r.state = 'idle'; r.t = rand(1, 2); }
       break;
     case 'chat':
       r.t -= dt;
@@ -1065,7 +1098,10 @@ function updateDayNight(dt) {
   scene.fog.color.copy(c.sky);
   for (const h of houses)
     for (const wm of h.winMats) wm.emissiveIntensity = lerp(0.25, 2.4, c.lamp);
+  for (const h of houses)
+    for (const gm of (h.nightGlow || [])) gm.emissiveIntensity = lerp(0.3, 3.0, c.lamp);
   lampHeadMat.emissiveIntensity = lerp(0.4, 3.4, c.lamp);
+  lampGlowMat.opacity = lerp(0, 0.55, c.lamp);
   for (const pl of lampLights) pl.intensity = lerp(0, 26, c.lamp);
   fireflyMat.opacity = c.firefly * 0.9;
   if (fireflyPts) fireflyPts.visible = c.firefly > 0.03;
@@ -1152,6 +1188,15 @@ function loop() {
 
   for (const r of residents) updateResident(r, dt, now);
   updatePuffs(dt); // shared dust-puff pool for the blob rigs
+  // Chimney smoke for the cozy houses — daytime only, one puff per chimney
+  // every ~0.45s (~1-2 live per chimney, well under the pool cap).
+  smokeTick -= dt;
+  if (smokeTick <= 0) {
+    smokeTick = 0.45;
+    if (!dn.isNight)
+      for (const h of houses)
+        if (h.smokeTip) spawnPuff(h.group, h.smokeTip.x, h.smokeTip.y, h.smokeTip.z);
+  }
   tryMeetings(dt);
   updatePins(dt, now);
 
