@@ -15,9 +15,24 @@ import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=2';
 import { buildHouseExterior } from './houses.js?v=3';
-import { Room3D } from './room3d.js?v=4';
-import { buildFountain } from './fountain.js?v=2';
+import { Room3D } from './room3d.js?v=5';
+import { buildFountain } from './fountain.js?v=3';
 import { grassTexture, cobbleTexture, buildLandscaping } from './landscaping.js?v=1';
+
+/* Self-test mode (?selftest=1): enables preserveDrawingBuffer for reliable
+   pixel sampling and captures boot errors for the audit. Inert otherwise. */
+const SELFTEST = new URLSearchParams(window.location.search).get('selftest') === '1';
+window.__city3d_selftest_boot = SELFTEST ? { errors: [] } : null;
+if (SELFTEST) {
+  const _cerr = console.error.bind(console);
+  console.error = (...a) => {
+    try { window.__city3d_selftest_boot.errors.push(a.map(String).join(' ')); } catch (e) { /* noop */ }
+    _cerr(...a);
+  };
+  window.addEventListener('error', (e) => {
+    try { window.__city3d_selftest_boot.errors.push('window.onerror: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch (err) { /* noop */ }
+  });
+}
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
@@ -38,7 +53,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 /* ================= renderer / composer ================= */
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: SELFTEST });
 } catch (e) {
   toast('WebGL unavailable: ' + e.message);
   throw e;
@@ -1252,4 +1267,36 @@ try {
 } catch (e) {
   toast('Failed to start the city: ' + (e.message || e));
   console.error(e);
+}
+
+/* ================= self-test mode (?selftest=1) ================= */
+/* Automated audit (structural checks + render probes) that writes its
+   verdict as DOM text — verification without screenshots. Zero cost when
+   the param is absent: the module is only dynamically imported then. */
+if (SELFTEST) {
+  setTimeout(async () => {
+    try {
+      const { runSelfTest } = await import('./selftest.js?v=1');
+      await runSelfTest({
+        renderer, composer, renderPass, scene, camera,
+        houses, residents, fountain, dn, TYPES, Room3D,
+        applySky: (dt) => updateDayNight(dt),
+        pauseCity: () => { running = false; },
+        resumeCity: () => { if (!running) { running = true; requestAnimationFrame(loop); } },
+        restoreCity: () => {
+          flight = null; focusKey = null;
+          cam.theta = ESTABLISH.theta; cam.phi = ESTABLISH.phi; cam.radius = ESTABLISH.radius;
+          cam.look.copy(ESTABLISH.look);
+          goal.theta = cam.theta; goal.phi = cam.phi; goal.radius = cam.radius;
+          goal.look.copy(cam.look);
+          dnMode = 'auto'; dn.override = 'auto';
+          dn.tick(Date.now(), true); dn.snap();
+          applyCam();
+        },
+        getBootErrors: () => (window.__city3d_selftest_boot ? window.__city3d_selftest_boot.errors : []),
+      });
+    } catch (e) {
+      console.error('[selftest] harness failed:', e);
+    }
+  }, 1200);
 }
