@@ -14,8 +14,10 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=2';
-import { buildHouseExterior } from './houses.js?v=1';
-import { Room3D } from './room3d.js?v=3';
+import { buildHouseExterior } from './houses.js?v=2';
+import { Room3D } from './room3d.js?v=4';
+import { buildFountain } from './fountain.js?v=1';
+import { grassTexture, cobbleTexture, buildLandscaping } from './landscaping.js?v=1';
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
@@ -97,33 +99,18 @@ for (let i = 0; i < 3; i++) {
 }
 
 /* ================= ground / plaza / paths ================= */
-function groundTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#7fae66';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 900; i++) {
-    g.fillStyle = Math.random() < 0.5 ? 'rgba(110,160,90,.5)' : 'rgba(150,190,120,.45)';
-    const s = rand(3, 14);
-    g.fillRect(rand(0, 256), rand(0, 256), s, s * 0.7);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(10, 10);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(75, 48),
-  new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 1 })
+  new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
 const stoneMat = new THREE.MeshStandardMaterial({ color: 0xcfc8bb, roughness: 0.95 });
-const plaza = new THREE.Mesh(new THREE.CircleGeometry(8.2, 40), stoneMat);
+const plaza = new THREE.Mesh(
+  new THREE.CircleGeometry(8.2, 40),
+  new THREE.MeshStandardMaterial({ map: cobbleTexture(), roughness: 0.95 }));
 plaza.rotation.x = -Math.PI / 2;
 plaza.position.y = 0.02;
 plaza.receiveShadow = true;
@@ -137,26 +124,10 @@ ringPath.receiveShadow = true;
 scene.add(ringPath);
 
 /* ================= fountain / pond ================= */
-const fountain = new THREE.Group();
-{
-  const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 1.0, 24), stoneMat);
-  basin.position.y = 0.5; basin.castShadow = true;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.18, 10, 32), stoneMat);
-  rim.rotation.x = Math.PI / 2; rim.position.y = 1.02; rim.castShadow = true;
-  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.6, 12), stoneMat);
-  column.position.y = 1.4; column.castShadow = true;
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10), stoneMat);
-  knob.position.y = 2.3;
-  fountain.add(basin, rim, column, knob);
-}
-const waterMat = new THREE.MeshStandardMaterial({
-  color: 0x4fa8d8, transparent: true, opacity: 0.88, roughness: 0.15, metalness: 0.1,
-});
-const water = new THREE.Mesh(new THREE.CircleGeometry(2.15, 28), waterMat);
-water.rotation.x = -Math.PI / 2;
-water.position.y = 0.92;
-fountain.add(water);
-scene.add(fountain);
+/* Tiered personality fountain (see js/fountain.js): mosaic tile band in
+ * all 16 type colors, animated water, spray + ripples, Pip statue. */
+const fountain = buildFountain();
+scene.add(fountain.group);
 
 const POND = new THREE.Vector3(14, 0, 9);
 const pond = new THREE.Mesh(
@@ -301,6 +272,9 @@ TYPES.forEach((t, i) => {
 });
 const houseByKey = (k) => houses.find((h) => h.key === k);
 let smokeTick = 0; // chimney-smoke timer (cozy houses, daytime only)
+
+/* scattered life: tufts, bushes, benches, lanterns, pond edging */
+const landscaping = buildLandscaping(scene, houses, POND);
 
 /* ================= residents (procedural 3D blob rigs + wander AI) ================= */
 const residents = []; // {key,type,rig,node,pos,state,t,target,targetHouse,visitHouse,chatWith,friends,tagEl,bubbleEl,...}
@@ -1200,9 +1174,6 @@ function loop() {
   tryMeetings(dt);
   updatePins(dt, now);
 
-  water.rotation.z = elapsed * 0.25;
-  const wp = 1 + Math.sin(elapsed * 1.7) * 0.02;
-  water.scale.set(wp, wp, 1);
 
   if (fireflyGeo) {
     const pos = fireflyGeo.attributes.position.array;
@@ -1218,6 +1189,8 @@ function loop() {
     }
   }
   updateDayNight(dt);
+  fountain.update(dt, elapsed, dn.cur.lamp);
+  landscaping.update(dn.cur.lamp);
   updateLabels();
 
   composer.render();
