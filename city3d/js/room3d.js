@@ -39,6 +39,7 @@
  * ========================================================================== */
 
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { BlobRig } from './blobRig.js';
 import { typeByKey } from './types.js?v=3';
 
@@ -184,6 +185,27 @@ function stdMat(key, params) {
 function box(parent, w, h, d, mat, x, y, z, rot) {
   const m = new THREE.Mesh(GEO.box, mat);
   m.scale.set(w, h, d);
+  m.position.set(x, y, z);
+  if (rot) m.rotation.set(rot[0] || 0, rot[1] || 0, rot[2] || 0);
+  m.castShadow = true; m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+/* rounded twin of box(): cached RoundedBoxGeometry per size, fixed
+ * world-space corner radius clamped so thin pieces never break. Used for
+ * the big furniture masses (couch, armchair, bookshelf, cabinets) so the
+ * rooms read soft like the exteriors, not sharp boxes. */
+const _rboxCache = new Map();
+function rboxGeo(w, h, d, r) {
+  const rad = Math.min(r, Math.min(w, h, d) * 0.45);
+  const key = w.toFixed(2) + '|' + h.toFixed(2) + '|' + d.toFixed(2) + '|' + rad.toFixed(3);
+  if (!_rboxCache.has(key))
+    _rboxCache.set(key, new RoundedBoxGeometry(w, h, d, 2, rad));
+  return _rboxCache.get(key);
+}
+function rbox(parent, w, h, d, mat, x, y, z, rot, r = 0.09) {
+  const m = new THREE.Mesh(rboxGeo(w, h, d, r), mat);
   m.position.set(x, y, z);
   if (rot) m.rotation.set(rot[0] || 0, rot[1] || 0, rot[2] || 0);
   m.castShadow = true; m.receiveShadow = true;
@@ -402,26 +424,26 @@ const FURNITURE = {
   /* 2-seat couch, faces +z */
   couch(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 2.6, 0.55, 1.1, M.wood, 0, 0.28, 0);
-    box(g, 2.6, 0.95, 0.3, M.wood, 0, 0.85, -0.42);
-    box(g, 0.3, 0.8, 1.1, M.wood, -1.15, 0.62, 0);
-    box(g, 0.3, 0.8, 1.1, M.wood, 1.15, 0.62, 0);
-    box(g, 1.02, 0.22, 0.85, M.cush, -0.55, 0.66, 0.05);
-    box(g, 1.02, 0.22, 0.85, M.cushDk, 0.55, 0.66, 0.05);
-    box(g, 0.5, 0.42, 0.16, M.cream, -0.7, 1.0, -0.3, [-0.2, 0, 0.08]); // throw pillows
-    box(g, 0.5, 0.42, 0.16, M.cush, 0.7, 1.0, -0.3, [-0.2, 0, -0.08]);
+    rbox(g, 2.6, 0.55, 1.1, M.wood, 0, 0.28, 0);
+    rbox(g, 2.6, 0.95, 0.3, M.wood, 0, 0.85, -0.42);
+    rbox(g, 0.3, 0.8, 1.1, M.wood, -1.15, 0.62, 0);
+    rbox(g, 0.3, 0.8, 1.1, M.wood, 1.15, 0.62, 0);
+    rbox(g, 1.02, 0.22, 0.85, M.cush, -0.55, 0.66, 0.05);
+    rbox(g, 1.02, 0.22, 0.85, M.cushDk, 0.55, 0.66, 0.05);
+    rbox(g, 0.5, 0.42, 0.16, M.cream, -0.7, 1.0, -0.3, [-0.2, 0, 0.08]); // throw pillows
+    rbox(g, 0.5, 0.42, 0.16, M.cush, 0.7, 1.0, -0.3, [-0.2, 0, -0.08]);
     return g;
   },
 
   /* single armchair, faces +z */
   armchair(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 1.05, 0.5, 0.95, M.wood, 0, 0.25, 0);
-    box(g, 1.05, 0.9, 0.26, M.wood, 0, 0.8, -0.36);
-    box(g, 0.24, 0.68, 0.95, M.wood, -0.42, 0.55, 0);
-    box(g, 0.24, 0.68, 0.95, M.wood, 0.42, 0.55, 0);
-    box(g, 0.56, 0.2, 0.66, M.cush, 0, 0.58, 0.06);
-    box(g, 0.56, 0.5, 0.14, M.cushDk, 0, 0.85, -0.22);
+    rbox(g, 1.05, 0.5, 0.95, M.wood, 0, 0.25, 0);
+    rbox(g, 1.05, 0.9, 0.26, M.wood, 0, 0.8, -0.36);
+    rbox(g, 0.24, 0.68, 0.95, M.wood, -0.42, 0.55, 0);
+    rbox(g, 0.24, 0.68, 0.95, M.wood, 0.42, 0.55, 0);
+    rbox(g, 0.56, 0.2, 0.66, M.cush, 0, 0.58, 0.06);
+    rbox(g, 0.56, 0.5, 0.14, M.cushDk, 0, 0.85, -0.22);
     return g;
   },
 
@@ -446,11 +468,11 @@ const FURNITURE = {
   /* bookshelf, 1.6w x 2.6h */
   bookshelf(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 1.6, 2.6, 0.5, M.dark, 0, 1.3, 0);
-    box(g, 1.4, 2.3, 0.3, stdMat('shelfIn', { color: 0x2c2318, roughness: 0.9 }), 0, 1.25, 0.06);
+    rbox(g, 1.6, 2.6, 0.5, M.dark, 0, 1.3, 0);
+    rbox(g, 1.4, 2.3, 0.3, stdMat('shelfIn', { color: 0x2c2318, roughness: 0.9 }), 0, 1.25, 0.06);
     for (let s = 0; s < 3; s++) {
       const y = 0.42 + s * 0.68;
-      box(g, 1.4, 0.06, 0.34, M.wood, 0, y, 0.06);
+      rbox(g, 1.4, 0.06, 0.34, M.wood, 0, y, 0.06);
       _bookRow(g, 1.28, y + 0.03, 0.06, rnd, tk + 's' + s);
     }
     return g;
@@ -459,14 +481,14 @@ const FURNITURE = {
   /* full-wall bookshelf, 3.4w x 2.9h */
   bookshelfTall(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 3.4, 2.9, 0.55, M.dark, 0, 1.45, 0);
-    box(g, 3.2, 2.6, 0.34, stdMat('shelfIn', { color: 0x2c2318, roughness: 0.9 }), 0, 1.4, 0.06);
+    rbox(g, 3.4, 2.9, 0.55, M.dark, 0, 1.45, 0);
+    rbox(g, 3.2, 2.6, 0.34, stdMat('shelfIn', { color: 0x2c2318, roughness: 0.9 }), 0, 1.4, 0.06);
     for (let s = 0; s < 4; s++) {
       const y = 0.3 + s * 0.62;
-      box(g, 3.2, 0.06, 0.38, M.wood, 0, y, 0.06);
+      rbox(g, 3.2, 0.06, 0.38, M.wood, 0, y, 0.06);
       _bookRow(g, 3.08, y + 0.03, 0.06, rnd, tk + 't' + s);
     }
-    box(g, 3.5, 0.12, 0.62, M.wood, 0, 2.96, 0); // cornice
+    rbox(g, 3.5, 0.12, 0.62, M.wood, 0, 2.96, 0); // cornice
     return g;
   },
 
@@ -631,11 +653,11 @@ const FURNITURE = {
   /* 3-drawer filing cabinet */
   filingCabinet(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 0.75, 1.35, 0.65, M.metal, 0, 0.675, 0);
+    rbox(g, 0.75, 1.35, 0.65, M.metal, 0, 0.675, 0);
     for (let d = 0; d < 3; d++) {
       const y = 0.32 + d * 0.42;
-      box(g, 0.65, 0.34, 0.03, stdMat('drawer', { color: 0x8a929e, metalness: 0.5, roughness: 0.5 }), 0, y, 0.33);
-      box(g, 0.3, 0.05, 0.05, M.dark, 0, y + 0.08, 0.35);
+      rbox(g, 0.65, 0.34, 0.03, stdMat('drawer', { color: 0x8a929e, metalness: 0.5, roughness: 0.5 }), 0, y, 0.33);
+      rbox(g, 0.3, 0.05, 0.05, M.dark, 0, y + 0.08, 0.35);
     }
     g.userData.surface = { y: 1.36, dx: 0, dz: 0 };
     return g;
@@ -684,13 +706,13 @@ const FURNITURE = {
   /* bench under the window, with cushions + throw pillows */
   windowSeat(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 2.6, 0.42, 1.0, M.wood, 0, 0.21, 0);
+    rbox(g, 2.6, 0.42, 1.0, M.wood, 0, 0.21, 0);
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
-      box(g, 0.09, 0.21, 0.09, M.dark, sx * 1.2, 0.1, sz * 0.42);
-    box(g, 1.18, 0.16, 0.88, M.cush, -0.62, 0.5, 0);
-    box(g, 1.18, 0.16, 0.88, M.cushDk, 0.62, 0.5, 0);
-    box(g, 0.5, 0.5, 0.18, M.cream, -0.95, 0.82, -0.32, [-0.25, 0, 0.1]);
-    box(g, 0.5, 0.5, 0.18, M.cush, 0.95, 0.82, -0.32, [-0.25, 0, -0.1]);
+      rbox(g, 0.09, 0.21, 0.09, M.dark, sx * 1.2, 0.1, sz * 0.42);
+    rbox(g, 1.18, 0.16, 0.88, M.cush, -0.62, 0.5, 0);
+    rbox(g, 1.18, 0.16, 0.88, M.cushDk, 0.62, 0.5, 0);
+    rbox(g, 0.5, 0.5, 0.18, M.cream, -0.95, 0.82, -0.32, [-0.25, 0, 0.1]);
+    rbox(g, 0.5, 0.5, 0.18, M.cush, 0.95, 0.82, -0.32, [-0.25, 0, -0.1]);
     g.userData.surface = { y: 0.59, dx: 0, dz: 0.1 };
     return g;
   },
@@ -712,9 +734,9 @@ const FURNITURE = {
   /* stacked crates — the istp "tool wall" */
   crateStack(accent, tk, o, rnd) {
     const g = new THREE.Group(), M = _fmat(tk, accent);
-    box(g, 0.95, 0.95, 0.95, M.dark, 0, 0.475, 0, [0, 0.1, 0]);
-    box(g, 0.7, 0.7, 0.7, M.wood, 0.12, 1.3, 0.05, [0, -0.25, 0]);
-    box(g, 0.5, 0.5, 0.5, M.cushDk, -0.08, 1.9, -0.02, [0, 0.4, 0]);
+    rbox(g, 0.95, 0.95, 0.95, M.dark, 0, 0.475, 0, [0, 0.1, 0]);
+    rbox(g, 0.7, 0.7, 0.7, M.wood, 0.12, 1.3, 0.05, [0, -0.25, 0]);
+    rbox(g, 0.5, 0.5, 0.5, M.cushDk, -0.08, 1.9, -0.02, [0, 0.4, 0]);
     return g;
   },
 
