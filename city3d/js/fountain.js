@@ -162,11 +162,13 @@ export function buildFountain() {
 
   /* ---- mosaic tile band: all 16 type colors around the lower basin ----
    *  Tiles enlarged (0.95 wide ≈ the 1.03 spacing, so the band reads as a
-   *  near-continuous color ring at plaza distance) and saturation-boosted. */
+   *  near-continuous color ring at plaza distance) and saturation-boosted,
+   *  plus a slight daylight emissive so the colors survive distance + bloom
+   *  (the ?selftest=1 mosaic probe used to wash out to 4 hues at distance). */
   for (let i = 0; i < TYPES.length; i++) {
     const a = (i / TYPES.length) * Math.PI * 2;
     const c = new THREE.Color(TYPES[i].color);
-    c.offsetHSL(0, 0.22, 0.03); // saturation lift for distance readability
+    c.offsetHSL(0, 0.28, 0.03); // saturation lift for distance readability
     const mat = new THREE.MeshStandardMaterial({
       color: c, emissive: c, emissiveIntensity: 0,
       roughness: 0.35,
@@ -318,9 +320,10 @@ export function buildFountain() {
       r.mat.opacity = (1 - u) * 0.45;
     }
     // night: water glows, mosaic band + gold statue catch the light, halo appears
+    // (mosaic keeps a slight daylight emissive so the 16 colors survive distance + bloom)
     waterMat.emissiveIntensity = lampF * 0.55;
     glowMat.opacity = lampF * 0.35;
-    for (const m of mosaicMats) m.emissiveIntensity = lampF * 0.8;
+    for (const m of mosaicMats) m.emissiveIntensity = 0.18 + lampF * 0.8;
     statueGoldMat.emissiveIntensity = lampF * 0.5;
     statueGoldDarkMat.emissiveIntensity = lampF * 0.4;
   }
