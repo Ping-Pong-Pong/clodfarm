@@ -13,6 +13,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs } from './blobRig.js';
+import { createDayNight } from './daynight.js?v=1';
 import { Room3D } from './room3d.js?v=2';
 
 /* ================= boot / diagnostics ================= */
@@ -50,9 +51,8 @@ renderer.toneMappingExposure = 1.1;
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const SKY_DAY = new THREE.Color(0x9fd4ef);
-const SKY_NIGHT = new THREE.Color(0x0b1026);
-scene.background = new THREE.Color().copy(SKY_DAY);
+// Placeholder sky — the real-time day/night rig corrects it before first frame.
+scene.background = new THREE.Color(0x0b1026);
 scene.fog = new THREE.Fog(scene.background.clone(), 70, 160);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 400);
@@ -352,7 +352,7 @@ function moodFor(r) {
         : 'Wandering the lanes';
     case 'visit': return `Visiting ${typeByKey(r.visitHouse).palName}`;
     case 'chat': return `Chatting with ${typeByKey(r.chatWith).palName}`;
-    default: return 'Lounging at home';
+    default: return r._rigState === 'sleep' ? 'Dreaming the night away' : 'Lounging at home';
   }
 }
 function updateResident(r, dt, now) {
@@ -390,7 +390,7 @@ function updateResident(r, dt, now) {
     r._rigState = 'happy';
   } else {
     const want = r.state === 'walk' ? 'walk'
-      : (nightF > 0.6 && r.state === 'idle' ? 'sleep' : 'idle');
+      : (dn.nightF > 0.6 && r.state === 'idle' ? 'sleep' : 'idle');
     if (r._rigState !== want) { r.rig.setState(want); r._rigState = want; }
   }
   r.rig.update(dt, now / 1000);
@@ -974,7 +974,7 @@ function enterInterior(typeKey) {
       // Room3D reuses our renderer + composer (swaps the RenderPass scene/camera).
       Room3D.enter(typeKey, {
         renderer, composer, renderPass,
-        getNightF: () => nightF,
+        getNightF: () => dn.nightF,
       }, () => {
         roomActive = false;
         hideCoach();
@@ -1002,16 +1002,27 @@ function enterInterior(typeKey) {
   }, 620);
 }
 
-/* ================= day / night ================= */
-const DAY_LEN = 150, NIGHT_LEN = 60, CYCLE = DAY_LEN + NIGHT_LEN;
-let nightF = 0;                 // 0 = full day, 1 = full night
-let dnMode = 'auto';            // auto | day | night
+/* ================= day / night (real local time) ================= */
+/* The city's sky follows the phone's clock. daynight.js owns the 24h
+   keyframed rig: we tick() it every ~30s and ease the live values toward
+   the target, so keyframe edges — and dock-pill override flips — never pop. */
+const dn = createDayNight();
+dn.tick(Date.now(), true);
+dn.snap(); // open on the true sky immediately — no fade from a wrong default
+let dnMode = 'auto';            // auto | day | night (mirrored into dn.override)
 const dnPill = document.getElementById('dnPill');
 const dnLabel = document.getElementById('dnLabel');
 dnPill.addEventListener('click', () => {
   dnMode = dnMode === 'auto' ? 'day' : dnMode === 'day' ? 'night' : 'auto';
+  dn.override = dnMode;
+  dn.tick(Date.now(), true); // re-target now; smooth() eases the transition
+  toast(dnMode === 'auto' ? 'Real-time sky resumed'
+    : dnMode === 'day' ? 'Daylight held — tap the pill to release'
+    : 'Night held — tap the pill to release');
 });
-const sunDay = new THREE.Color(0xfff2dd), sunNight = new THREE.Color(0x7d94c9);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) dn.tick(Date.now(), true); // re-sync after backgrounding
+});
 const FIREFLY_N = 120;
 const fireflyBase = new Float32Array(FIREFLY_N * 3);
 const fireflyPhase = new Float32Array(FIREFLY_N);
@@ -1040,29 +1051,30 @@ function initFireflies() {
   fireflyPts = pts;
   scene.add(pts);
 }
-function updateDayNight(dt, elapsed) {
-  let target;
-  if (dnMode === 'day') target = 0;
-  else if (dnMode === 'night') target = 1;
-  else target = (elapsed % CYCLE) > DAY_LEN ? 1 : 0;
-  nightF += (target - nightF) * Math.min(1, dt / 5);
-  if (Math.abs(target - nightF) < 0.002) nightF = target;
-
-  sun.intensity = lerp(1.35, 0.12, nightF);
-  sun.color.copy(sunDay).lerp(sunNight, nightF);
-  hemi.intensity = lerp(0.75, 0.18, nightF);
-  scene.background.copy(SKY_DAY).lerp(SKY_NIGHT, nightF);
-  scene.fog.color.copy(scene.background);
+function updateDayNight(dt) {
+  dn.tick(Date.now()); // cheap no-op unless ~30s elapsed or the override changed
+  dn.smooth(dt);
+  const c = dn.cur;
+  sun.intensity = c.sunI;
+  sun.color.copy(c.sunC);
+  sun.position.copy(c.sunPos);
+  hemi.intensity = c.hemiI;
+  hemi.color.copy(c.hemiSky);
+  hemi.groundColor.copy(c.hemiGnd);
+  scene.background.copy(c.sky);
+  scene.fog.color.copy(c.sky);
   for (const h of houses)
-    for (const wm of h.winMats) wm.emissiveIntensity = lerp(0.25, 2.4, nightF);
-  lampHeadMat.emissiveIntensity = lerp(0.4, 3.4, nightF);
-  for (const pl of lampLights) pl.intensity = lerp(0, 26, nightF);
-  fireflyMat.opacity = nightF * 0.9;
-  if (fireflyPts) fireflyPts.visible = nightF > 0.03;
+    for (const wm of h.winMats) wm.emissiveIntensity = lerp(0.25, 2.4, c.lamp);
+  lampHeadMat.emissiveIntensity = lerp(0.4, 3.4, c.lamp);
+  for (const pl of lampLights) pl.intensity = lerp(0, 26, c.lamp);
+  fireflyMat.opacity = c.firefly * 0.9;
+  if (fireflyPts) fireflyPts.visible = c.firefly > 0.03;
 
-  const isNight = nightF > 0.5;
+  const isNight = dn.isNight;
   dnPill.classList.toggle('night', isNight);
-  const label = dnMode === 'auto' ? (isNight ? 'Night' : 'Day') : (dnMode === 'day' ? 'Day (held)' : 'Night (held)');
+  const label = dnMode === 'auto'
+    ? (isNight ? '🌙 Night · live' : '☀️ Day · live')
+    : (dnMode === 'day' ? '☀️ Day · held' : '🌙 Night · held');
   if (dnLabel.textContent !== label) dnLabel.textContent = label;
 }
 
@@ -1149,7 +1161,7 @@ function loop() {
 
   if (fireflyGeo) {
     const pos = fireflyGeo.attributes.position.array;
-    const drift = nightF > 0.03 ? 1 : 0;
+    const drift = dn.nightF > 0.03 ? 1 : 0;
     if (drift) {
       for (let i = 0; i < FIREFLY_N; i++) {
         const ph = fireflyPhase[i];
@@ -1160,7 +1172,7 @@ function loop() {
       fireflyGeo.attributes.position.needsUpdate = true;
     }
   }
-  updateDayNight(dt, elapsed);
+  updateDayNight(dt);
   updateLabels();
 
   composer.render();
