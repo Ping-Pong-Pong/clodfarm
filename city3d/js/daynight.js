@@ -30,10 +30,10 @@ export const DAYNIGHT_TICK_MS = 30000;
 // lamp: window/lamp emissive factor; firefly/dust: particle opacities.
 const STOPS = [
   // deep night (0–5)
-  { h: 0.0,  sky: 0x0b1026, sunC: 0x7d94c9, sunI: 0.14, hemiI: 0.18, hemiSky: 0x27334f, hemiGnd: 0x141a26, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
-  { h: 5.0,  sky: 0x0b1026, sunC: 0x7d94c9, sunI: 0.14, hemiI: 0.18, hemiSky: 0x27334f, hemiGnd: 0x141a26, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
+  { h: 0.0,  sky: 0x101736, sunC: 0x7d94c9, sunI: 0.22, hemiI: 0.30, hemiSky: 0x33415f, hemiGnd: 0x1a2233, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
+  { h: 5.0,  sky: 0x101736, sunC: 0x7d94c9, sunI: 0.22, hemiI: 0.30, hemiSky: 0x33415f, hemiGnd: 0x1a2233, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
   // pre-dawn lift (5–7 → dawn)
-  { h: 6.0,  sky: 0x1a2340, sunC: 0x8d9cc8, sunI: 0.16, hemiI: 0.20, hemiSky: 0x2c3a5c, hemiGnd: 0x171d2c, lamp: 1.00, firefly: 0.90, dust: 0.15, night: 0.96 },
+  { h: 6.0,  sky: 0x1a2340, sunC: 0x8d9cc8, sunI: 0.16, hemiI: 0.26, hemiSky: 0x2c3a5c, hemiGnd: 0x171d2c, lamp: 1.00, firefly: 0.90, dust: 0.15, night: 0.96 },
   // dawn (7): warm low sun, pink-orange sky
   { h: 7.0,  sky: 0xe8a37e, sunC: 0xffb36b, sunI: 0.85, hemiI: 0.48, hemiSky: 0xd8a88e, hemiGnd: 0x5c5148, lamp: 0.55, firefly: 0.25, dust: 0.35, night: 0.22 },
   // morning (7–11): dawn burns off fast, then bright warm-white
@@ -46,10 +46,10 @@ const STOPS = [
   // sunset (17–19): low orange sun, long mood
   { h: 18.5, sky: 0xe8825a, sunC: 0xff9448, sunI: 0.65, hemiI: 0.38, hemiSky: 0xc98a6a, hemiGnd: 0x4a4038, lamp: 0.45, firefly: 0.15, dust: 0.30, night: 0.34 },
   // dusk / blue hour (19–21): lamps coming up
-  { h: 20.5, sky: 0x1c2547, sunC: 0x8fa3d4, sunI: 0.20, hemiI: 0.22, hemiSky: 0x2c3a5c, hemiGnd: 0x1a2030, lamp: 0.90, firefly: 0.80, dust: 0.18, night: 0.90 },
+  { h: 20.5, sky: 0x1c2547, sunC: 0x8fa3d4, sunI: 0.20, hemiI: 0.30, hemiSky: 0x2c3a5c, hemiGnd: 0x1a2030, lamp: 0.90, firefly: 0.80, dust: 0.18, night: 0.90 },
   // night (21–24)
-  { h: 22.5, sky: 0x0d1228, sunC: 0x7d94c9, sunI: 0.14, hemiI: 0.18, hemiSky: 0x27334f, hemiGnd: 0x141a26, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
-  { h: 24.0, sky: 0x0b1026, sunC: 0x7d94c9, sunI: 0.14, hemiI: 0.18, hemiSky: 0x27334f, hemiGnd: 0x141a26, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
+  { h: 22.5, sky: 0x101736, sunC: 0x7d94c9, sunI: 0.22, hemiI: 0.30, hemiSky: 0x33415f, hemiGnd: 0x1a2233, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
+  { h: 24.0, sky: 0x101736, sunC: 0x7d94c9, sunI: 0.22, hemiI: 0.30, hemiSky: 0x33415f, hemiGnd: 0x1a2233, lamp: 1.00, firefly: 1.00, dust: 0.12, night: 1.00 },
 ];
 
 const lerp = (a, b, k) => a + (b - a) * k;
