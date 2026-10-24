@@ -13,9 +13,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
-import { createDayNight } from './daynight.js?v=1';
+import { createDayNight } from './daynight.js?v=2';
 import { buildHouseExterior } from './houses.js?v=1';
-import { Room3D } from './room3d.js?v=2';
+import { Room3D } from './room3d.js?v=3';
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
