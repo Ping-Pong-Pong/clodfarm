@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TYPES, typeByKey } from './types.js?v=3';
-import { BlobRig, updatePuffs } from './blobRig.js';
+import { BlobRig, updatePuffs } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=1';
 import { Room3D } from './room3d.js?v=2';
 
