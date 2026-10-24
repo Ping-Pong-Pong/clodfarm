@@ -1540,6 +1540,12 @@ _wireOrbitOnce();
 export const Room3D = {
   enter(typeKey, api, onExit) { _enter(typeKey, api, onExit); },
   exit() { _exit(false); },
+  /** Structural info for the ?selftest=1 audit (no rendering). */
+  specInfo() {
+    const specs = {};
+    for (const [k, s] of Object.entries(ROOM_SPECS)) specs[k] = s.furniture.map((f) => f.p);
+    return { specKeys: Object.keys(ROOM_SPECS), furnitureKeys: Object.keys(FURNITURE), specs };
+  },
   getResident() { return active ? active.room.rig : null; },
   /* project the resident's head to client coords (for 3D-anchored DOM hints) */
   residentScreenPos() {
