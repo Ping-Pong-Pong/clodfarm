@@ -17,6 +17,7 @@
  * differ) but created once at build. No per-frame allocation here.
  */
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { typeByKey } from './types.js?v=3';
 
 /* ---------------- shared geometry (module-level, cached) ---------------- */
@@ -57,6 +58,37 @@ function put(parent, geo, mat, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, o = 
   return m;
 }
 
+/* ---------------- rounded-box helpers (less blocky) ---------------- */
+/* Cached RoundedBoxGeometry per size: a fixed world-space corner radius
+ * (clamped so thin pieces never break) — no scale distortion, unlike
+ * scaling a unit rounded box. Segments kept at 2 for phone perf. */
+const _rboxCache = new Map();
+function rboxGeo(w, h, d, r) {
+  const rad = Math.min(r, Math.min(w, h, d) * 0.45);
+  const key = w.toFixed(2) + '|' + h.toFixed(2) + '|' + d.toFixed(2) + '|' + rad.toFixed(3);
+  if (!_rboxCache.has(key))
+    _rboxCache.set(key, new RoundedBoxGeometry(w, h, d, 2, rad));
+  return _rboxCache.get(key);
+}
+/** Rounded-box twin of put(): same positioning, soft corners. o.r = radius (default 0.14). */
+function rput(parent, mat, x = 0, y = 0, z = 0, w = 1, h = 1, d = 1, o = {}) {
+  const m = new THREE.Mesh(rboxGeo(w, h, d, o.r !== undefined ? o.r : 0.14), mat);
+  m.position.set(x, y, z);
+  if (o.ry) m.rotation.y = o.ry;
+  if (o.rx) m.rotation.x = o.rx;
+  if (o.rz) m.rotation.z = o.rz;
+  m.castShadow = o.cast !== false;
+  m.receiveShadow = o.recv !== false;
+  parent.add(m);
+  return m;
+}
+/** Four vertical corner boards for a w x h x d body centered at local origin. */
+function cornerBoards(parent, w, h, d, mat = whiteMat) {
+  const hw = w / 2, hd = d / 2;
+  [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([x, z]) =>
+    put(parent, BOX, mat, x, h / 2, z, 0.18, h, 0.18, { cast: false }));
+}
+
 /* ---------------- per-house build context ---------------- */
 function makeCtx(tintHex) {
   const g = new THREE.Group();
@@ -87,6 +119,9 @@ function makeCtx(tintHex) {
   function door(x, z, accentHex, w = 1.3, h = 2.4) {
     const c = new THREE.Color(accentHex).multiplyScalar(0.55);
     const mat = std(c, { roughness: 0.8 });
+    // door frame + step: every doorway reads finished, not a slab in a wall
+    put(g, BOX, frameMat, x, h / 2 + 0.05, z - 0.02, w + 0.34, h + 0.24, 0.1, { cast: false });
+    put(g, BOX, stoneMat, x, 0.07, z + 0.35, w + 0.7, 0.14, 0.7, { cast: false, recv: true });
     put(g, BOX, mat, x, h / 2, z, w, h, 0.16);
     put(g, SPH, std(0xd8b25a, { roughness: 0.4, metalness: 0.5 }),
       x + w * 0.32, 1.1, z + 0.14, 0.07, 0.07, 0.07, { cast: false });
@@ -104,10 +139,13 @@ function gableRoof(g, mat, w, d, h, y) {
   const m = new THREE.Mesh(geo, mat);
   m.position.y = y; m.castShadow = true; m.receiveShadow = true;
   g.add(m);
+  // fascia boards: a finished eave edge front + back
+  put(g, BOX, frameMat, 0, y + 0.08, d / 2 + 0.03, w + 0.4, 0.18, 0.12, { cast: false });
+  put(g, BOX, frameMat, 0, y + 0.08, -d / 2 - 0.03, w + 0.4, 0.18, 0.12, { cast: false });
   return m;
 }
 function flatRoof(g, mat, w, d, y, over = 0.5, thick = 0.32) {
-  return put(g, BOX, mat, 0, y + thick / 2, 0, w + over * 2, thick, d + over * 2);
+  return rput(g, mat, 0, y + thick / 2, 0, w + over * 2, thick, d + over * 2, { r: 0.06 });
 }
 function coneRoof(g, mat, x, y, z, r, h, seg4 = false) {
   return put(g, seg4 ? CONE4 : CONE, mat, x, y + h / 2, z, r, h, r,
@@ -237,7 +275,8 @@ function bEnfp(key) {
   tilt.rotation.z = 0.035; tilt.rotation.y = -0.03; // slightly crooked
   c.g.add(tilt);
   const walls = std('#f6e3c8');
-  put(tilt, BOX, walls, 0, 2, 0, 6, 4, 5);
+  rput(tilt, walls, 0, 2, 0, 6, 4, 5);
+  cornerBoards(tilt, 6, 4, 5);
   gableRoof(tilt, std('#FF8C69', { flatShading: true }), 6.6, 5.6, 2.2, 4);
   // colorful shutters + flower boxes on the front windows
   const shutCols = [0x4ecdc4, 0xffd93d, 0xc77dff, 0x6d9dc5];
@@ -282,7 +321,7 @@ function bEnfp(key) {
 function bEnfj(key) {
   const c = base('#ffd27a', '#FF6B6B');
   const walls = std('#f3e9d2');
-  put(c.g, BOX, walls, 0, 2, 0, 6, 4, 5);
+  rput(c.g, walls, 0, 2, 0, 6, 4, 5);
   gableRoof(c.g, std('#8a5a44', { flatShading: true }), 7.0, 6.0, 1.8, 4);
   // cream corner trim
   [[-3.02, 0], [3.02, 0], [-3.02, -2.52], [3.02, -2.52]].forEach(([x, z]) =>
@@ -319,7 +358,7 @@ function bEnfj(key) {
 function bEntj(key) {
   const c = base('#cfe4ff', '#8B5CF6');
   const walls = std('#dfe3ea', { roughness: 0.6 });
-  put(c.g, BOX, walls, 0, 3, -0.6, 6, 6, 3.8); // tall body, set back
+  rput(c.g, walls, 0, 3, -0.6, 6, 6, 3.8); // tall body, set back
   flatRoof(c.g, std('#3a3f4a'), 6, 3.8, 6, 0.7);
   // big glass front: transparent plane + dark mullion grid
   const glassMat = new THREE.MeshStandardMaterial({
@@ -358,7 +397,7 @@ function bEntp(key) {
   lean.rotation.z = 0.14; // ~8° tilt
   lean.position.y = 0.35;
   c.g.add(lean);
-  put(lean, BOX, std('#f7e9b0'), 0, 1.75, 0, 5.6, 3.5, 4.6);
+  rput(lean, std('#f7e9b0'), 0, 1.75, 0, 5.6, 3.5, 4.6);
   gableRoof(lean, std('#F59E0B', { flatShading: true }), 6.2, 5.2, 2.0, 3.5);
   // crooked windows (slightly rotated rects), riding the leaning group
   const mkWin = (x, y, z, w, h, rz) => {
@@ -390,7 +429,7 @@ function bEntp(key) {
 function bEstj(key) {
   const c = base('#ffdca8', '#4A5F8A');
   const brick = std('#9e5b4a', { roughness: 0.95 });
-  put(c.g, BOX, brick, 0, 2, 0, 6, 4, 5);
+  rput(c.g, brick, 0, 2, 0, 6, 4, 5);
   gableRoof(c.g, std('#5a4638', { flatShading: true }), 6.6, 5.6, 2.2, 4);
   // white portico: 4 columns + pediment
   [[-2.2], [-0.75], [0.75], [2.2]].forEach(([x]) =>
@@ -438,7 +477,8 @@ function bEstj(key) {
 /* ---- ESFJ (cherry) — cozy cottage: big glowing kitchen window, garden bed, hedge fence ---- */
 function bEsfj(key) {
   const c = base('#ffd27a', '#FFB59E');
-  put(c.g, BOX, std('#f7e8d8'), 0, 2, 0, 6, 4, 5);
+  rput(c.g, std('#f7e8d8'), 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   gableRoof(c.g, std('#c96f5a', { flatShading: true }), 6.6, 5.6, 2.2, 4);
   // BIG glowing kitchen window (wide, warm) -> nightGlow
   const km = c.win(-1.5, 2.2, 2.57, 2.4, 1.5, 0, 'rect', true);
@@ -514,7 +554,8 @@ function bEstp(key) {
 /* ---- ESFP (watermelon) — party house: bright paint, striped awning, string lights ---- */
 function bEsfp(key) {
   const c = base('#ffe9a8', '#FFD93D');
-  put(c.g, BOX, std('#FFD93D', { roughness: 0.85 }), 0, 2, 0, 6, 4, 5);
+  rput(c.g, std('#FFD93D', { roughness: 0.85 }), 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   flatRoof(c.g, std('#ff5a3c', { flatShading: true }), 6, 5, 4, 0.6);
   // bold striped awning over the door (canvas stripe texture, shared)
   const awnTex = (() => {
@@ -562,7 +603,8 @@ function bEsfp(key) {
 function bInfj(key) {
   const c = base('#ffdca8', '#6D9DC5');
   const walls = std('#4a5a7a', { roughness: 0.9 });
-  put(c.g, BOX, walls, 0, 5, 0, 4, 10, 4);
+  rput(c.g, walls, 0, 5, 0, 4, 10, 4);
+  cornerBoards(c.g, 4, 10, 4, frameMat);
   coneRoof(c.g, std('#2e3a52', { flatShading: true }), 0, 10, 0, 3.1, 2.6, true);
   // round moon window near the top -> nightGlow
   const moonMat = c.win(0, 8.2, 2.02, 1.3, 1.3, 0, 'round', true);
@@ -587,7 +629,8 @@ function bInfj(key) {
 function bInfp(key) {
   const c = base('#ffd27a', '#A8E6CF');
   const walls = std('#f6dcc8');
-  put(c.g, BOX, walls, 0, 1.9, 0, 6, 3.8, 5);
+  rput(c.g, walls, 0, 1.9, 0, 6, 3.8, 5);
+  cornerBoards(c.g, 6, 3.8, 5);
   barrelRoof(c.g, std('#b78a6e', { flatShading: true }), 6.6, 5.6, 3.8);
   // round windows everywhere
   c.win(-1.75, 2.2, 2.57, 1.15, 1.15, 0, 'round');
@@ -618,7 +661,7 @@ function bInfp(key) {
 function bIntj(key) {
   const c = base('#cfe4ff', '#3B4A6B');
   const walls = std('#232838', { roughness: 0.7 });
-  put(c.g, BOX, walls, 0, 4, 0, 5, 8, 5);
+  rput(c.g, walls, 0, 4, 0, 5, 8, 5, { r: 0.06 });
   flatRoof(c.g, std('#161a24'), 5, 5, 8, 0.35);
   // ONE vertical slit window -> nightGlow (cool blue-white)
   const slitMat = new THREE.MeshStandardMaterial({
@@ -642,7 +685,8 @@ function bIntj(key) {
 function bIntp(key) {
   const c = base('#cfe4ff', '#8B9BB4');
   const walls = std('#cfd6c8', { roughness: 0.9 });
-  put(c.g, BOX, walls, 0, 2, 0, 6, 4, 5);
+  rput(c.g, walls, 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   flatRoof(c.g, std('#6b7280'), 6, 5, 4, 0.5);
   // telescope dome: half-sphere sunk into the roof + angled telescope
   put(c.g, SPH, std('#b8bec8', { roughness: 0.5, metalness: 0.3 }),
@@ -676,7 +720,8 @@ function bIntp(key) {
 /* ---- ISFJ (grape) — tidy cottage: white picket fence, flower rows, smoke ---- */
 function bIsfj(key) {
   const c = base('#ffd27a', '#E8B84B');
-  put(c.g, BOX, std('#f2ead8'), 0, 2, 0, 6, 4, 5);
+  rput(c.g, std('#f2ead8'), 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   gableRoof(c.g, std('#b08a5a', { flatShading: true }), 6.6, 5.6, 2.2, 4);
   c.win(-1.75, 2.3, 2.57, 1.1, 1.1);
   c.win(1.75, 2.3, 2.57, 1.1, 1.1);
@@ -708,7 +753,8 @@ function bIsfj(key) {
 /* ---- ISFP (kiwi) — art studio: paint splatter, easel, sculpture corner ---- */
 function bIsfp(key) {
   const c = base('#ffdca8', '#4ECDC4');
-  put(c.g, BOX, std('#e8f0f2', { roughness: 0.9 }), 0, 2, 0, 6, 4, 5);
+  rput(c.g, std('#e8f0f2', { roughness: 0.9 }), 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   flatRoof(c.g, std('#4ECDC4'), 6, 5, 4, 0.6);
   // big north-light studio window on the side
   c.win(-3.07, 2.4, 0.4, 1.8, 2.0, -Math.PI / 2);
@@ -803,7 +849,8 @@ function bIstj(key) {
 /* ---- ISTP (avocado) — garage workshop: big paneled garage door, workbench, tools ---- */
 function bIstp(key) {
   const c = base('#ffdca8', '#8A9A5B');
-  put(c.g, BOX, std('#b8b0a0', { roughness: 0.95 }), 0, 2, 0, 6, 4, 5);
+  rput(c.g, std('#b8b0a0', { roughness: 0.95 }), 0, 2, 0, 6, 4, 5);
+  cornerBoards(c.g, 6, 4, 5);
   flatRoof(c.g, std('#4a4a4a'), 6, 5, 4, 0.7);
   // big paneled garage door (the "front door")
   const gdMat = std('#8A9A5B', { roughness: 0.8 });
