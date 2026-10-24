@@ -16,7 +16,7 @@ import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=2';
 import { buildHouseExterior } from './houses.js?v=3';
 import { Room3D } from './room3d.js?v=5';
-import { buildFountain } from './fountain.js?v=3';
+import { buildFountain } from './fountain.js?v=4';
 import { grassTexture, cobbleTexture, buildLandscaping } from './landscaping.js?v=1';
 
 /* Self-test mode (?selftest=1): enables preserveDrawingBuffer for reliable
@@ -1086,7 +1086,10 @@ function updateDayNight(dt) {
   scene.background.copy(c.sky);
   scene.fog.color.copy(c.sky);
   for (const h of houses)
-    for (const wm of h.winMats) wm.emissiveIntensity = lerp(0.25, 2.4, c.lamp);
+    // Night window glow capped at 1.8 (was 2.4): at 2.4 the ACES tone map
+    // clipped warm emissives to near-white, so windows read bright but
+    // hue-less; 1.8 stays far above the brightness floor while keeping hue.
+    for (const wm of h.winMats) wm.emissiveIntensity = lerp(0.25, 1.8, c.lamp);
   for (const h of houses)
     for (const gm of (h.nightGlow || [])) gm.emissiveIntensity = lerp(0.3, 3.0, c.lamp);
   lampHeadMat.emissiveIntensity = lerp(0.4, 3.4, c.lamp);
@@ -1276,7 +1279,7 @@ try {
 if (SELFTEST) {
   setTimeout(async () => {
     try {
-      const { runSelfTest } = await import('./selftest.js?v=1');
+      const { runSelfTest } = await import('./selftest.js?v=2');
       await runSelfTest({
         renderer, composer, renderPass, scene, camera,
         houses, residents, fountain, dn, TYPES, Room3D,
