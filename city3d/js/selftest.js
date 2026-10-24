@@ -236,6 +236,11 @@ export async function runSelfTest(ctx) {
   });
 
   // Probe 2: fountain close-up from two angles — expect >= 6 distinct hues on the ring.
+  // NOTE (2026-10-24 fix): the old probe sampled a SCREEN-SPACE CIRCLE around
+  // the projected center. The ring is a horizontal circle, which projects to
+  // an ELLIPSE from any elevated camera — so most circle samples landed on
+  // pavement/water/basin instead of tiles (that was the [3,2]/union-4 FAIL).
+  // Now every sample is the projection of an actual 3D ring point.
   await check('probe_mosaic_hues', async () => {
     const perView = [];
     let union = new Set();
@@ -244,15 +249,13 @@ export async function runSelfTest(ctx) {
       camera.lookAt(new THREE.Vector3(0, 1, 0));
       render();
       const { data, w, h } = await capturePixels(renderer);
-      const center = projectToScreen(camera, new THREE.Vector3(0, 0.78, 0), cssW, cssH);
-      const edge = projectToScreen(camera, new THREE.Vector3(2.64, 0.78, 0), cssW, cssH);
-      if (!center || !edge) { perView.push(0); continue; }
-      const rad = Math.hypot((edge.x - center.x) * pr, (edge.y - center.y) * pr);
       const samples = [];
       for (let i = 0; i < 72; i++) {
         const a = (i / 72) * Math.PI * 2;
-        const x = Math.round(center.x * pr + Math.cos(a) * rad);
-        const y = Math.round(center.y * pr + Math.sin(a) * rad);
+        const p = projectToScreen(camera,
+          new THREE.Vector3(Math.cos(a) * 2.64, 0.78, Math.sin(a) * 2.64), cssW, cssH);
+        if (!p) continue;
+        const x = Math.round(p.x * pr), y = Math.round(p.y * pr);
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = (y * w + x) * 4;
         samples.push([data[j], data[j + 1], data[j + 2]]);
@@ -298,7 +301,28 @@ export async function runSelfTest(ctx) {
     camera.lookAt(new THREE.Vector3(hp.x, 2, hp.z));
     render();
     const { data, w, h } = await capturePixels(renderer);
-    const wc = projectToScreen(camera, new THREE.Vector3(hp.x, 2.5, hp.z), cssW, cssH);
+    // NOTE (2026-10-24 fix): the old probe sampled the house CENTER, which
+    // for ENFP is door-top + plain wall (its windows sit at ±1.75) — so it
+    // measured moonlit wall, not a window (hence 0% warm despite bright
+    // emissive windows). Sample a real camera-facing window mesh instead.
+    let wc = null;
+    {
+      const wp = new THREE.Vector3(), n = new THREE.Vector3(), q = new THREE.Quaternion();
+      let bestDot = -Infinity;
+      h0.group.traverse((o) => {
+        if (!o.isMesh || !h0.winMats.includes(o.material)) return;
+        o.getWorldPosition(wp);
+        o.getWorldQuaternion(q);
+        n.set(0, 0, 1).applyQuaternion(q);
+        const d = n.dot(camera.position.clone().sub(wp).normalize());
+        if (d > bestDot) {
+          bestDot = d;
+          wc = projectToScreen(camera, wp.clone(), cssW, cssH);
+        }
+      });
+      if (bestDot <= 0) wc = null;
+    }
+    if (!wc) wc = projectToScreen(camera, new THREE.Vector3(hp.x, 2.5, hp.z), cssW, cssH);
     let winStr = 'no window point';
     let winOk = false;
     if (wc) {
@@ -322,19 +346,18 @@ export async function runSelfTest(ctx) {
 
   /* ---- C. performance ---- */
   await check('perf_fps', async () => {
-    const look = new THREE.Vector3(0, 1.5, 0);
+    // NOTE (2026-10-24 fix): the old probe measured while the city loop was
+    // paused AND read renderer.info after composer.render() — whose final
+    // pass is a fullscreen triangle, hence the meaningless "1 call, 1 tri".
+    // Now: unpause the live loop and count real vsync frames for 3s, and
+    // read calls/tris from one direct scene render (bypassing the composer
+    // tail). The audit's final restore+resume still runs after this check.
+    ctx.resumeCity();
+    await sleep(150); // let the loop restart
     let frames = 0;
     const t0 = performance.now();
     await new Promise((res) => {
       const step = () => {
-        const t = (performance.now() - t0) / 1000;
-        const theta = 0.7 + t * 0.12;
-        camera.position.set(
-          look.x + 44 * Math.sin(0.92) * Math.sin(theta),
-          look.y + 44 * Math.cos(0.92),
-          look.z + 44 * Math.sin(0.92) * Math.cos(theta));
-        camera.lookAt(look);
-        composer.render();
         frames++;
         if (performance.now() - t0 < 3000) requestAnimationFrame(step);
         else res();
@@ -342,11 +365,17 @@ export async function runSelfTest(ctx) {
       requestAnimationFrame(step);
     });
     const fps = frames / ((performance.now() - t0) / 1000);
+    // Direct scene render for a true scene-frame call/triangle count.
+    const prevAutoReset = renderer.info.autoReset;
+    renderer.info.autoReset = true;
+    renderer.render(scene, camera);
     const calls = renderer.info.render.calls;
     const tris = renderer.info.render.triangles;
+    renderer.info.autoReset = prevAutoReset;
+    ctx.pauseCity();
     const ua = (navigator.userAgent || '').slice(0, 80);
     // WARN, not FAIL, below 20fps: the test machine's power is unknown.
-    return { status: fps >= 20 ? 'PASS' : 'WARN', value: `${fps.toFixed(1)} fps, ${calls} calls, ${tris} tris [${ua}]` };
+    return { status: fps >= 20 ? 'PASS' : 'WARN', value: `${fps.toFixed(1)} fps (live loop), ${calls} scene calls, ${tris} tris [${ua}]` };
   });
 
   /* ---- restore + verdict ---- */
