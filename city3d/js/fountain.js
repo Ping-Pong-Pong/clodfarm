@@ -236,6 +236,12 @@ export function buildFountain() {
   const statue = buildStatue();
   statue.position.y = 4.0;
   g.add(statue);
+  // The statue is frozen mid-hop, so its feet hover above the pedestal.
+  // A translucent water jet rising from the pedestal to the blob's underside
+  // explains the float — Pip is held up by the fountain itself.
+  const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 1.15, 10), waterMat);
+  jet.position.y = 4.58;
+  g.add(jet);
 
   /* ---- flower ring + stone edging around the base ---- */
   const flowerCols = [0xff5a7a, 0xffd93d, 0xff8c69, 0xc77dff, 0xffffff, 0x4ecdc4];
