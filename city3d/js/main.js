@@ -1221,10 +1221,10 @@ function loop() {
     if (deepHouseKey) {
       // deep link: skip the intro, fly straight to the house
       setTimeout(() => selectHouse(deepHouseKey, { fly: true, sheet: true }), 700);
-    } else {
-      // directory auto-opens shortly after first load
-      setTimeout(() => { if (!sheetKey && !deepHouseKey) openDir(); }, 1500);
     }
+    // NOTE: the directory intentionally does NOT auto-open on load — it opens
+    // only via the Directory button (btnDirectory -> openDir). Fresh loads show
+    // the plain overview.
   }
 }
 
