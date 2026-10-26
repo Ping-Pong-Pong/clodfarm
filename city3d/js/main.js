@@ -15,7 +15,7 @@ import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=2';
 import { buildHouseExterior } from './houses.js?v=3';
-import { Room3D } from './room3d.js?v=5';
+import { Room3D } from './room3d.js?v=6';
 import { buildFountain } from './fountain.js?v=4';
 import { grassTexture, cobbleTexture, buildLandscaping } from './landscaping.js?v=1';
 
@@ -36,12 +36,18 @@ if (SELFTEST) {
 
 /* ================= boot / diagnostics ================= */
 const errEl = document.getElementById('errtoast');
-function toast(msg) {
+// Transient by default: a notice must never stick forever over the UI the
+// way the old hold message did. ms=0 means sticky (fatal errors only).
+let toastTimer = null;
+function toast(msg, ms = 6000) {
   errEl.style.display = 'block';
   errEl.textContent = msg;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = null;
+  if (ms > 0) toastTimer = setTimeout(() => { errEl.style.display = 'none'; }, ms);
 }
 window.addEventListener('error', (e) => {
-  if (errEl && !errEl.dataset.watchdog) toast('Error: ' + (e.message || 'unknown'));
+  if (errEl && !errEl.dataset.watchdog) toast('Error: ' + (e.message || 'unknown'), 0);
 });
 
 const lerp = (a, b, k) => a + (b - a) * k;
@@ -55,7 +61,7 @@ let renderer;
 try {
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: SELFTEST });
 } catch (e) {
-  toast('WebGL unavailable: ' + e.message);
+  toast('WebGL unavailable: ' + e.message, 0);
   throw e;
 }
 // Cap pixel ratio for phone perf (1.75 proven good on hd2d-demo).
@@ -869,6 +875,7 @@ function closeDir() {
   dirEl.classList.remove('open');
   dirEl.classList.add('closed');
   dirEl.setAttribute('aria-hidden', 'true');
+  refreshHoldBanner(); // the banner hides while the directory is open
 }
 dirSearch.addEventListener('input', () => buildDirRows(dirSearch.value));
 buildDirRows();
@@ -881,6 +888,7 @@ document.getElementById('btnOverview').addEventListener('click', () => {
   focusKey = null;
   closeSheet();
   dirEl.classList.remove('open'); dirEl.classList.add('closed');
+  refreshHoldBanner();
   flyOverview();
   lastInteract = performance.now();
 });
@@ -1006,6 +1014,10 @@ function enterInterior(typeKey) {
       });
       roomActive = true;
       uiEl.classList.remove('on'); // hide city chrome while inside (frozen tags otherwise)
+      // A hold set in the city carries into the room (lighting follows it),
+      // so re-show the banner briefly: it is the only release path while
+      // the dock pill is hidden, and it collapses on its own after 4s.
+      if (dnMode !== 'auto') showHoldBanner(true);
       // Crossfade: veil fades back out, revealing the 3D room underneath.
       requestAnimationFrame(() => requestAnimationFrame(() => veilEl.classList.remove('on')));
       // Hard check per the user's beat: the resident is the payoff of the click.
@@ -1038,13 +1050,65 @@ dnPill.addEventListener('click', () => {
   dnMode = dnMode === 'auto' ? 'day' : dnMode === 'day' ? 'night' : 'auto';
   dn.override = dnMode;
   dn.tick(Date.now(), true); // re-target now; smooth() eases the transition
-  toast(dnMode === 'auto' ? 'Real-time sky resumed'
-    : dnMode === 'day' ? 'Daylight held — tap the pill to release'
-    : 'Night held — tap the pill to release');
+  // The pill label itself flips to "Day · held" / "Day · live"; the banner
+  // below carries the message (and the release action) — never the error
+  // toast, which used to stick forever over the top chrome.
+  if (dnMode === 'auto') hideHoldBanner();
+  else showHoldBanner(true);
 });
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) dn.tick(Date.now(), true); // re-sync after backgrounding
 });
+
+/* ---- hold banner: the day/night hold indicator (NOT the error toast) ----
+   The old design showed the hold message through toast() into #errtoast —
+   a full-width red bar at the very top that never cleared, sat above the
+   city topbar AND the room's Back button, and told the user to "tap the
+   pill" while the pill itself was hidden inside rooms. This banner fixes
+   all four: it lives in its own row below the top bar (never over any
+   button — and it hides entirely while the directory panel, which shares
+   that row, is open), tapping it releases the hold (the release path
+   inside rooms, where the dock pill is hidden), it collapses to a small
+   indicator after 4s, and it disappears entirely once the hold is released.
+   All four functions are hoisted declarations: enterInterior (above) and
+   closeDir (above) call them, but only ever after module evaluation. */
+const holdBanner = document.getElementById('holdBanner');
+let holdTimer = null;
+let holdFull = false; // true while the full banner (vs the mini indicator) is due
+function renderHoldBanner(full) {
+  if (dnMode === 'auto') { holdBanner.classList.remove('show', 'mini'); return; }
+  // The directory panel shares this row: never cover its header/search.
+  if (dirEl.classList.contains('open')) { holdBanner.classList.remove('show', 'mini'); return; }
+  holdFull = full;
+  holdBanner.textContent = full
+    ? (dnMode === 'day' ? '☀️ Daylight held — tap to release' : '🌙 Night held — tap to release')
+    : (dnMode === 'day' ? '☀️ Day held' : '🌙 Night held');
+  holdBanner.classList.add('show');
+  holdBanner.classList.toggle('mini', !full);
+}
+function showHoldBanner(full = true) {
+  renderHoldBanner(full);
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = null;
+  if (dnMode !== 'auto' && full) holdTimer = setTimeout(() => renderHoldBanner(false), 4000);
+}
+function hideHoldBanner() {
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = null;
+  holdFull = false;
+  holdBanner.classList.remove('show', 'mini');
+}
+function refreshHoldBanner() {
+  // Re-render after the directory closes (or any chrome change): steady
+  // state is the mini indicator; the full banner only shows on set/entry.
+  if (dnMode !== 'auto') renderHoldBanner(holdFull);
+}
+function releaseHold() {
+  dnMode = 'auto'; dn.override = 'auto';
+  dn.tick(Date.now(), true);
+  hideHoldBanner();
+}
+holdBanner.addEventListener('click', releaseHold);
 const FIREFLY_N = 120;
 const fireflyBase = new Float32Array(FIREFLY_N * 3);
 const fireflyPhase = new Float32Array(FIREFLY_N);
@@ -1279,7 +1343,7 @@ try {
 if (SELFTEST) {
   setTimeout(async () => {
     try {
-      const { runSelfTest } = await import('./selftest.js?v=2');
+      const { runSelfTest } = await import('./selftest.js?v=3');
       await runSelfTest({
         renderer, composer, renderPass, scene, camera,
         houses, residents, fountain, dn, TYPES, Room3D,
@@ -1293,6 +1357,7 @@ if (SELFTEST) {
           goal.theta = cam.theta; goal.phi = cam.phi; goal.radius = cam.radius;
           goal.look.copy(cam.look);
           dnMode = 'auto'; dn.override = 'auto';
+          hideHoldBanner();
           dn.tick(Date.now(), true); dn.snap();
           applyCam();
         },
