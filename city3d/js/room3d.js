@@ -5,6 +5,12 @@
  * Same art direction as the 3D city: low-poly primitives, warm lighting,
  * bloom-friendly emissives. Cutaway dollhouse: BACK + LEFT walls only.
  *
+ * v5: NIGHT READABILITY. Interiors were too dark at night: a single corner
+ * lamp (windowed falloff dying past ~7m) + hemi 0.22 + moon key left most
+ * of the room near-black under ACES. Fix: hemi floor 0.42, lamp 26 with a
+ * 14m cutoff so it covers the whole room, lamps ramp on early at dusk
+ * (ease-out), a dedicated loft pendant light for 2-level rooms, and the
+ * loft slab no longer casts a key-light shadow over the ground floor.
  * v4: ARCHITECTURAL COHERENCE. Interiors now derive from their exteriors:
  * per-spec `levels` (two-story exteriors get a visible loft + staircase),
  * `windowShape` echoing the exterior's window shapes, `wallStyle` echoing
@@ -65,8 +71,11 @@ const KNOBS = {
   wanderIdleMin: 4, wanderIdleMax: 8,     // s between walks
   dustN: 120,
   dayKeyI: 1.55, nightKeyI: 0.15,
-  dayHemiI: 0.5, nightHemiI: 0.22,
-  lampNightI: 18,                         // point light intensity at full night
+  dayHemiI: 0.5, nightHemiI: 0.42,          // interior ambient floor at night:
+                                           // hemi alone must keep walls readable
+  lampNightI: 26,                         // point light intensity at full night
+  loftLampNightI: 6,                      // second-level pendant intensity at full night
+                                           // (kept modest: a point light 1m from a chair blows out fast)
   shaftDayO: 0.32, shaftNightO: 0.05,
   lampEmissivePeak: 2.2, windowEmissivePeak: 1.6,
 };
@@ -832,7 +841,7 @@ const ROOM_SPECS = {
      FULL bookshelf wall, cold blue-white light, dark floor, zero cozy. */
   intj: {
     wallColor: 0x454c63, floorStyle: 'darkwood',
-    lightTemp: 0xbcd2ff, lightBias: 0.75, keyI: [1.7, 0.12], lampColor: 0xcfe0ff,
+    lightTemp: 0xbcd2ff, lightBias: 0.75, keyI: [1.7, 0.16], lampColor: 0xcfe0ff, lampNightI: 32,
     levels: 2, windowShape: 'slit', trimColor: 0x4a5168,
     loft: { x0: -5, x1: -0.5, z0: -4, z1: 1, y: 2.7 },
     loftFurniture: [
@@ -934,7 +943,7 @@ const ROOM_SPECS = {
      moonlight bias, small bookshelf, lantern on the floor beside the chair. */
   infj: {
     wallColor: 0x7d89b0, floorStyle: 'darkwood',
-    lightTemp: 0x9a8cff, lightBias: 0.7, keyI: [1.0, 0.10], lampColor: 0x9a8cff,
+    lightTemp: 0x9a8cff, lightBias: 0.7, keyI: [1.0, 0.14], lampColor: 0x9a8cff,
     levels: 2, windowShape: 'round',
     loft: { x0: -5, x1: -0.5, z0: -4, z1: 1, y: 2.7 },
     loftFurniture: [
@@ -1309,7 +1318,7 @@ function buildRoom(typeKey) {
      the front railing leaves a gap at the landing. Ground furniture was
      re-laid for these types so no tall piece collides with the platform
      (platform underside is at loft.y - 0.25). */
-  let loft = null;
+  let loft = null, loftLight = null, loftBulbMat = null;
   if (spec.levels === 2 && spec.loft) {
     const L = spec.loft;
     const loftG = new THREE.Group();
@@ -1334,6 +1343,26 @@ function buildRoom(typeKey) {
       box(loftG, 1.0, 0.3, 0.32, loftWood, -4.4, 0.15 + i * 0.3, 3.6 - i * 0.29);
     loftG.userData.isLoft = true;
     scene.add(loftG);
+    // The loft slab must not shadow the ground floor: the key light casts
+    // shadows, and a 4.5x5 slab overhead would black out the floor beneath
+    // it at dusk, when the key is still strong.
+    loftG.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    // Loft pendant lamp: the second level gets its OWN real light (a wall-
+    // mounted rod + bulb over the platform center), so the loft never sits
+    // black above a lit ground floor at night. Wired in _update() with the
+    // same early-on lamp ramp as the ground-floor lamp.
+    const rodLen = cz + D / 2;
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, rodLen, 8), loftDark);
+    rod.rotation.x = Math.PI / 2;
+    rod.position.set(cx, L.y + 2.1, -D / 2 + rodLen / 2);
+    scene.add(rod);
+    loftBulbMat = new THREE.MeshStandardMaterial({ color: 0xfff3c4, emissive: spec.lampColor, emissiveIntensity: 0.3, roughness: 0.4 });
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), loftBulbMat);
+    bulb.position.set(cx, L.y + 2.0, cz);
+    scene.add(bulb);
+    loftLight = new THREE.PointLight(spec.lampColor, 0, 8, 1.6);
+    loftLight.position.set(cx, L.y + 2.0, cz);
+    scene.add(loftLight);
     // loft furniture stands ON the platform (y = L.y)
     const loftPieces = [];
     for (const f of (spec.loftFurniture || [])) {
@@ -1375,7 +1404,10 @@ function buildRoom(typeKey) {
   }
 
   /* ---- the room's ONE point light, riding the first lamp piece ---- */
-  const lampLight = new THREE.PointLight(spec.lampColor, 0, 9, 1.6);
+  // NOTE: three.js windows point-light falloff to ZERO at the cutoff distance,
+  // so the old 9m cutoff left the far half of a 10x8 room (and the whole loft)
+  // effectively unlit at night. 14m keeps the window open across the room.
+  const lampLight = new THREE.PointLight(spec.lampColor, 0, 14, 1.6);
   if (lampPiece) {
     lampLight.position.y = lampPiece.userData.lightY || 1.8;
     lampPiece.add(lampLight);
@@ -1455,7 +1487,7 @@ function buildRoom(typeKey) {
     levels: spec.levels || 1, loft,
     baseYaw, baseR, basePitch,
     yaw: baseYaw, pitch: basePitch,           // orbit goals (damped toward)
-    rig, key, hemi, lampLight, shadeMat, paneMat, shaftMat, dust,
+    rig, key, hemi, lampLight, loftLight, loftBulbMat, shadeMat, paneMat, shaftMat, dust,
     dustSeed, prop,
     spec, rugPos: [spec.rug.x, spec.rug.z],
     // wander state — waypoints straight from the spec
@@ -1681,11 +1713,20 @@ function _update(st, dt, t) {
   room.hemi.color.copy(_cA);
   room.hemi.intensity = lerp(S.hemiI ? S.hemiI[0] : KNOBS.dayHemiI, S.hemiI ? S.hemiI[1] : KNOBS.nightHemiI, f);
 
-  // lamp: spec color, ramps up at night (single point light per room, as before)
-  room.lampLight.intensity = lerp(0, S.lampNightI || KNOBS.lampNightI, f);
+  // lamp: spec color. Lamps come on EARLY at dusk (ease-out ramp): at f=0.5
+  // the room is already ~75% lamplit, so the dusk middle zone — daylight
+  // collapsed, lamps not yet up — stops reading as murk. Full at night.
+  const lampF = 1 - (1 - f) * (1 - f);
+  room.lampLight.intensity = lerp(0, S.lampNightI || KNOBS.lampNightI, lampF);
   if (room.shadeMat) {
     room.shadeMat.emissive.set(S.lampColor);
-    room.shadeMat.emissiveIntensity = lerp(0.3, KNOBS.lampEmissivePeak, f);
+    room.shadeMat.emissiveIntensity = lerp(0.3, KNOBS.lampEmissivePeak, lampF);
+  }
+  // loft pendant: same ramp, so the second level is lit whenever the lamps are
+  if (room.loftLight) room.loftLight.intensity = lerp(0, KNOBS.loftLampNightI, lampF);
+  if (room.loftBulbMat) {
+    room.loftBulbMat.emissive.set(S.lampColor);
+    room.loftBulbMat.emissiveIntensity = lerp(0.3, KNOBS.lampEmissivePeak, lampF);
   }
 
   // window pane: warm white by day -> moon blue by night, tinted toward lightTemp
@@ -1694,6 +1735,10 @@ function _update(st, dt, t) {
   room.paneMat.emissiveIntensity = KNOBS.windowEmissivePeak;
   room.shaftMat.opacity = lerp(KNOBS.shaftDayO, KNOBS.shaftNightO, f)
     * (1 + 0.08 * Math.sin(t * 0.9)); // subtle breathing
+
+  // room backdrop: near-black void by day reads as shadow at night, not void
+  if (room.scene.background && room.scene.background.isColor)
+    room.scene.background.copy(_cA.set(0x1a1620)).lerp(_cB.set(0x2e2a33), f);
 }
 
 /** Room-entry greeting bubble: random per-type greeting shown with the
@@ -1761,6 +1806,7 @@ export const Room3D = {
   specInfo() {
     const specs = {};
     const architecture = {};
+    const lighting = {};
     for (const [k, s] of Object.entries(ROOM_SPECS)) {
       specs[k] = s.furniture.map((f) => f.p);
       architecture[k] = {
@@ -1771,7 +1817,15 @@ export const Room3D = {
         loftPieces: (s.loftFurniture || []).map((f) => f.p),
       };
     }
-    return { specKeys: Object.keys(ROOM_SPECS), furnitureKeys: Object.keys(FURNITURE), specs, architecture };
+    for (const [k, s] of Object.entries(ROOM_SPECS)) {
+      lighting[k] = {
+        nightHemiI: s.hemiI ? s.hemiI[1] : KNOBS.nightHemiI,
+        lampNightI: s.lampNightI || KNOBS.lampNightI,
+        nightKeyI: s.keyI[1],
+        hasLoftLight: !!(s.levels === 2 && s.loft),
+      };
+    }
+    return { specKeys: Object.keys(ROOM_SPECS), furnitureKeys: Object.keys(FURNITURE), specs, architecture, lighting };
   },
   getResident() { return active ? active.room.rig : null; },
   /* project the resident's head to client coords (for 3D-anchored DOM hints) */
