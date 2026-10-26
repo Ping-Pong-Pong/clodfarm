@@ -5,7 +5,11 @@
  * Same art direction as the 3D city: low-poly primitives, warm lighting,
  * bloom-friendly emissives. Cutaway dollhouse: BACK + LEFT walls only.
  *
- * v3: DATA-DRIVEN PERSONALITY INTERIORS. A compact furniture library
+ * v4: ARCHITECTURAL COHERENCE. Interiors now derive from their exteriors:
+ * per-spec `levels` (two-story exteriors get a visible loft + staircase),
+ * `windowShape` echoing the exterior's window shapes, `wallStyle` echoing
+ * exterior materials (logs, planks, brick), and `trimColor`. See ARCHITECTURE
+ * notes on ROOM_SPECS. v3: DATA-DRIVEN PERSONALITY INTERIORS. A compact furniture library
  * (FURNITURE, ~20 builder functions sharing GEO/stdMat) plus one ROOM_SPECS
  * entry per type key (wall color, floor style, light temperature, per-type
  * intensities, furniture layout, rug, prop anchor, wander waypoints).
@@ -139,6 +143,28 @@ function floorTexture(style = 'wood') {
       g.fillRect(jx, r * rh, 2, rh);
     }
   });
+}
+
+/* brick courses in a light warm tone (estj colonial): reads as brick but
+ * stays bright enough for a dollhouse room. */
+function brickTexture() {
+  const tex = canvasTexture(512, (g, s) => {
+    const rnd = mulberry32(99);
+    g.fillStyle = '#cfc4b8'; // mortar
+    g.fillRect(0, 0, s, s);
+    const rows = 8, rh = s / rows, bw = 128;
+    for (let r = 0; r < rows; r++) {
+      const off = (r % 2) * bw * 0.5;
+      for (let x = -1; x < 5; x++) {
+        const v = 168 + rnd() * 22;
+        g.fillStyle = `rgb(${v | 0},${(v * 0.82) | 0},${(v * 0.72) | 0})`;
+        g.fillRect(x * bw + off + 3, r * rh + 3, bw - 6, rh - 6);
+      }
+    }
+  });
+  tex.repeat.set(2, 1.5);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
 }
 
 function shaftTexture() {
@@ -776,6 +802,19 @@ const FURNITURE = {
 /*                                                                     */
 /* wallColor   wall paint (tinted 8% toward the type accent at build)  */
 /* floorStyle  'wood' | 'stone' | 'darkwood'                           */
+/* levels      1 | 2 — two-story exteriors (infj tower, intj monolith,  */
+/*             entj glass box) get a loft + staircase + loft furniture  */
+/* loft        { x0,x1,z0,z1,y } platform bounds + top height (levels 2)*/
+/* loftFurniture [{ p, x, z, r }] — pieces standing ON the loft (y=loft.y)*/
+/* loftWindow  { shape, x, y } — small window on the back wall above the*/
+/*             loft, echoing the exterior's stacked windows             */
+/* windowShape 'rect'|'round'|'slit'|'wide'|'tall'|'glass' — echoes the  */
+/*             exterior's window shapes (default 'rect')                */
+/* wallStyle   'plain'|'logs'|'planks'|'brick' — echoes exterior walls  */
+/* trimColor   baseboard + window-frame color override (default cream/  */
+/*             wood); dark trim for the monolith, white for the colonial */
+/* camPos/camTarget — entry camera override (two-level rooms pull back  */
+/*             and up so BOTH levels are in frame on entry)             */
 /* lightTemp   hex the day key light is biased toward                  */
 /* lightBias   0..1 — how far the key leans toward lightTemp            */
 /* keyI        [day, night] key-light intensities                      */
@@ -792,11 +831,18 @@ const ROOM_SPECS = {
   /* INTJ "The Chess Player" — command center: desk facing the window,
      FULL bookshelf wall, cold blue-white light, dark floor, zero cozy. */
   intj: {
-    wallColor: 0xe8ecf2, floorStyle: 'darkwood',
+    wallColor: 0x454c63, floorStyle: 'darkwood',
     lightTemp: 0xbcd2ff, lightBias: 0.75, keyI: [1.7, 0.12], lampColor: 0xcfe0ff,
+    levels: 2, windowShape: 'slit', trimColor: 0x4a5168,
+    loft: { x0: -5, x1: -0.5, z0: -4, z1: 1, y: 2.7 },
+    loftFurniture: [
+      { p: 'desk', x: -2.75, z: -2.9, r: 0 },
+    ],
+    loftWindow: { shape: 'slit', x: -2.75, y: 3.9 },
+    camPos: [8.5, 6.8, 12.0], camTarget: [0, 2.0, -0.5],
     furniture: [
-      { p: 'desk', x: 1.0, z: -2.9, r: 0 },
-      { p: 'bookshelfTall', x: -2.4, z: -3.55, r: 0 },
+      { p: 'desk', x: 0.2, z: -2.7, r: 0 },
+      { p: 'bookshelfTall', x: 3.2, z: -3.55, r: 0 },
       { p: 'floorLamp', x: 4.3, z: -2.6, r: 0 },
     ],
     rug: { x: 0.5, z: 0.8, r: 2.2 }, propOn: 'table', propPiece: 'desk',
@@ -824,6 +870,7 @@ const ROOM_SPECS = {
   istj: {
     wallColor: 0xe9e7e2, floorStyle: 'stone',
     lightTemp: 0xf2f0ea, lightBias: 0.25, keyI: [1.5, 0.15], lampColor: 0xffe9c4,
+    wallStyle: 'logs', trimColor: 0x6e5236,
     furniture: [
       { p: 'desk', x: -1.5, z: -2.5, r: Math.PI },
       { p: 'filingCabinet', x: 2.7, z: -3.55, r: 0 },
@@ -839,6 +886,7 @@ const ROOM_SPECS = {
   infp: {
     wallColor: 0xf7ecec, floorStyle: 'wood',
     lightTemp: 0xffc9d4, lightBias: 0.55, keyI: [1.35, 0.14], lampColor: 0xffc9a8,
+    windowShape: 'round',
     furniture: [
       { p: 'windowSeat', x: 1.0, z: -3.4, r: 0 },
       { p: 'bigPlant', x: -3.6, z: -2.6, r: 0 },
@@ -871,6 +919,7 @@ const ROOM_SPECS = {
   esfp: {
     wallColor: 0xfff4d6, floorStyle: 'wood',
     lightTemp: 0xffb3e2, lightBias: 0.6, keyI: [1.7, 0.18], lampColor: 0xff9de2,
+    windowShape: 'round',
     furniture: [
       { p: 'floorCushions', x: -0.9, z: 1.3, r: 0.4, o: { n: 2 } },
       { p: 'floorCushions', x: 2.0, z: 1.1, r: -0.5, o: { n: 2 } },
@@ -884,12 +933,20 @@ const ROOM_SPECS = {
   /* INFJ "The Counselor" — armchair aimed at the window, dim violet light,
      moonlight bias, small bookshelf, lantern on the floor beside the chair. */
   infj: {
-    wallColor: 0xe6e0f2, floorStyle: 'darkwood',
+    wallColor: 0x7d89b0, floorStyle: 'darkwood',
     lightTemp: 0x9a8cff, lightBias: 0.7, keyI: [1.0, 0.10], lampColor: 0x9a8cff,
+    levels: 2, windowShape: 'round',
+    loft: { x0: -5, x1: -0.5, z0: -4, z1: 1, y: 2.7 },
+    loftFurniture: [
+      { p: 'armchair', x: -2.75, z: -2.2, r: 0.4 },
+      { p: 'bookshelf', x: -3.2, z: -3.55, r: 0 },
+    ],
+    loftWindow: { shape: 'round', x: -2.75, y: 3.9 },
+    camPos: [8.5, 6.8, 12.0], camTarget: [0, 2.0, -0.5],
     furniture: [
       { p: 'armchair', x: 1.0, z: -2.4, r: Math.PI },
-      { p: 'bookshelf', x: -3.2, z: -3.6, r: 0 },
-      { p: 'tableLamp', x: 2.3, z: -2.5, r: 0 },
+      { p: 'bookshelf', x: 3.4, z: -3.55, r: 0 },
+      { p: 'tableLamp', x: 4.3, z: -1.2, r: 0 },
     ],
     rug: { x: 0.3, z: 0.8, r: 2.2 }, propOn: 'floor', propFloor: [2.0, -1.6],
     waypoints: [[0.3, 0.8], [1.0, -1.3], [-2.5, -2.5]],
@@ -900,6 +957,7 @@ const ROOM_SPECS = {
   isfp: {
     wallColor: 0xfdf3e8, floorStyle: 'wood',
     lightTemp: 0xffd9a0, lightBias: 0.55, keyI: [1.6, 0.16], lampColor: 0xffc98a,
+    windowShape: 'tall',
     furniture: [
       { p: 'easel', x: -1.6, z: -2.5, r: 0.5 },
       { p: 'tableLamp', x: 2.7, z: -2.9, r: 0 },
@@ -914,6 +972,7 @@ const ROOM_SPECS = {
   estj: {
     wallColor: 0xeceff2, floorStyle: 'stone',
     lightTemp: 0xf4f6ff, lightBias: 0.5, keyI: [1.65, 0.15], lampColor: 0xfff0d8,
+    wallStyle: 'brick', trimColor: 0xf5f2ea,
     furniture: [
       { p: 'desk', x: 1.0, z: -2.9, r: 0 },
       { p: 'filingCabinet', x: -0.7, z: -3.55, r: 0 },
@@ -929,6 +988,7 @@ const ROOM_SPECS = {
   esfj: {
     wallColor: 0xfdf0e4, floorStyle: 'wood',
     lightTemp: 0xffd2a8, lightBias: 0.55, keyI: [1.6, 0.20], lampColor: 0xffc07a,
+    windowShape: 'wide',
     furniture: [
       { p: 'roundTable', x: 0.5, z: 0.2, r: 0 },
       { p: 'armchair', x: -1.5, z: 0.2, r: 1.35 },
@@ -944,6 +1004,7 @@ const ROOM_SPECS = {
   estp: {
     wallColor: 0xf6f1e6, floorStyle: 'stone',
     lightTemp: 0xfff6e8, lightBias: 0.3, keyI: [1.9, 0.14], lampColor: 0xfff2d8,
+    wallStyle: 'planks',
     furniture: [
       { p: 'workbench', x: -2.6, z: -3.1, r: -0.1 },
       { p: 'beanbag', x: 1.9, z: 1.5, r: 0.8 },
@@ -974,10 +1035,18 @@ const ROOM_SPECS = {
   entj: {
     wallColor: 0xecebf4, floorStyle: 'darkwood',
     lightTemp: 0xdfe8ff, lightBias: 0.65, keyI: [1.8, 0.14], lampColor: 0xe8e4ff,
+    levels: 2, windowShape: 'glass',
+    loft: { x0: -5, x1: -0.5, z0: -4, z1: 1, y: 2.7 },
+    loftFurniture: [
+      { p: 'desk', x: -2.75, z: -2.9, r: 0 },
+      { p: 'armchair', x: -2.75, z: -1.2, r: 2.6 },
+    ],
+    loftWindow: { shape: 'rect', x: -2.75, y: 3.9 },
+    camPos: [8.5, 6.8, 12.0], camTarget: [0, 2.0, -0.5],
     furniture: [
       { p: 'desk', x: 0.6, z: -2.5, r: Math.PI },
       { p: 'bookshelf', x: 3.4, z: -3.55, r: 0 },
-      { p: 'floorLamp', x: -3.6, z: -2.8, r: 0 },
+      { p: 'floorLamp', x: 4.2, z: -2.6, r: 0 },
     ],
     rug: { x: 0.6, z: 0.8, r: 2.3 }, propOn: 'floor', propFloor: [-0.7, -2.3],
     waypoints: [[0.6, 0.8], [0.6, -1.3], [2.6, -2.4]],
@@ -1052,6 +1121,9 @@ function buildRoom(typeKey) {
   const seed = [...typeKey].reduce((a, c) => a + c.charCodeAt(0), 0);
   const rnd = mulberry32(seed);
   const tk = typeKey;
+  // entry camera: two-level rooms pull back + up so BOTH levels frame on entry
+  const camPosV = spec.camPos || KNOBS.camPos;
+  const camTargetV = spec.camTarget || KNOBS.camTarget;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1620);
@@ -1073,7 +1145,9 @@ function buildRoom(typeKey) {
 
   /* ---- walls: back + left only (cutaway). spec wallColor, 8% toward accent ---- */
   const wallTint = new THREE.Color(spec.wallColor).lerp(accent, 0.08);
-  const wallMat = stdMat('wall' + tk, { color: wallTint, roughness: 0.9 });
+  const wallMat = spec.wallStyle === 'brick'
+    ? stdMat('wallBrick' + tk, { color: wallTint, roughness: 0.9, map: brickTexture() })
+    : stdMat('wall' + tk, { color: wallTint, roughness: 0.9 });
   const backWall = new THREE.Mesh(GEO.box, wallMat);
   backWall.scale.set(W + 0.4, H, 0.3);
   backWall.position.set(0, H / 2, -D / 2 - 0.15);
@@ -1085,30 +1159,100 @@ function buildRoom(typeKey) {
   leftWall.receiveShadow = true;
   scene.add(leftWall);
 
-  /* baseboards */
-  const bbMat = stdMat('baseboard', { color: 0xe4d6bd, roughness: 0.8 });
+  /* baseboards (trimColor overrides the shared cream) */
+  const bbMat = spec.trimColor
+    ? stdMat('baseboard' + tk, { color: spec.trimColor, roughness: 0.8 })
+    : stdMat('baseboard', { color: 0xe4d6bd, roughness: 0.8 });
   box(scene, W, 0.22, 0.08, bbMat, 0, 0.11, -D / 2 + 0.05);
   box(scene, 0.08, 0.22, D, bbMat, -W / 2 + 0.05, 0.11, 0);
 
-  /* ---- window on back wall + light shaft + dust ---- */
-  const winX = 1.0, winY = 2.9;
-  const frameM = stdMat('winFrame', { color: 0x7a5c3e, roughness: 0.7 });
-  box(scene, 2.5, 0.18, 0.34, frameM, winX, winY + 1.0, -D / 2 + 0.05);
-  box(scene, 2.5, 0.18, 0.34, frameM, winX, winY - 1.0, -D / 2 + 0.05);
-  box(scene, 0.18, 2.1, 0.34, frameM, winX - 1.16, winY, -D / 2 + 0.05);
-  box(scene, 0.18, 2.1, 0.34, frameM, winX + 1.16, winY, -D / 2 + 0.05);
-  box(scene, 0.14, 1.85, 0.3, frameM, winX, winY, -D / 2 + 0.05); // mullion
-  box(scene, 2.2, 0.14, 0.3, frameM, winX, winY, -D / 2 + 0.05);
-  box(scene, 2.9, 0.14, 0.5, frameM, winX, winY - 1.15, -D / 2 + 0.12); // sill
+  /* ---- wall-material echoes (geometry overlays on the wall faces) ----
+     Logs (istj) and planks (estp) run full courses, split around the rect
+     window opening (x -0.35..2.35, y 1.85..3.95) so they never cross the
+     pane. Both current users have the rect window; if a future type pairs
+     an overlay with another window shape, extend the split rect. */
+  if (spec.wallStyle === 'logs' || spec.wallStyle === 'planks') {
+    const inWinBand = (y) => y > 1.85 && y < 3.95;
+    const segs = (y) => inWinBand(y) ? [[-5, -0.35], [2.35, 5]] : [[-5, 5]];
+    if (spec.wallStyle === 'logs') {
+      const logMat = stdMat('wallLog', { color: 0x8a6a48, roughness: 1 });
+      for (let i = 0; i < 9; i++) {
+        const y = 0.35 + i * 0.55;
+        for (const [x0, x1] of segs(y)) {
+          const len = x1 - x0;
+          const log = new THREE.Mesh(GEO.cyl, logMat);
+          log.scale.set(0.28, len, 0.28);
+          log.rotation.z = Math.PI / 2;
+          log.position.set((x0 + x1) / 2, y, -D / 2 + 0.14);
+          log.castShadow = log.receiveShadow = true;
+          scene.add(log);
+        }
+        const side = new THREE.Mesh(GEO.cyl, logMat);
+        side.scale.set(0.28, D, 0.28);
+        side.rotation.x = Math.PI / 2;
+        side.position.set(-W / 2 + 0.14, y, 0);
+        side.castShadow = side.receiveShadow = true;
+        scene.add(side);
+      }
+    } else {
+      const plankMat = stdMat('wallPlank', { color: 0x6e5236, roughness: 1 });
+      for (let i = 0; i < 7; i++) {
+        const y = 0.8 + i * 0.6;
+        for (const [x0, x1] of segs(y))
+          box(scene, x1 - x0, 0.06, 0.04, plankMat, (x0 + x1) / 2, y, -D / 2 + 0.03);
+        box(scene, 0.04, 0.06, D, plankMat, -W / 2 + 0.03, y, 0);
+      }
+    }
+  }
 
+  /* ---- window on back wall + light shaft + dust ----
+     Shape echoes the exterior's windows: rect (default), round (esfp/infp/
+     infj tower), slit (intj monolith), wide (esfj kitchen window), tall
+     (isfp studio window), glass (entj glass wall, with a mullion grid).
+     The loft window (levels 2) reuses paneMat below, so its day/night tint
+     follows automatically. */
+  const winX = 1.0, winY = 2.9;
+  const shape = spec.windowShape || 'rect';
+  const frameM = spec.trimColor
+    ? stdMat('winFrame' + tk, { color: spec.trimColor, roughness: 0.7 })
+    : stdMat('winFrame', { color: 0x7a5c3e, roughness: 0.7 });
   const paneMat = new THREE.MeshStandardMaterial({
     color: 0x222831, emissive: 0xfff2d8,
     emissiveIntensity: KNOBS.windowEmissivePeak, roughness: 0.4,
   });
-  const pane = new THREE.Mesh(GEO.plane, paneMat);
-  pane.scale.set(2.2, 1.85, 1);
-  pane.position.set(winX, winY, -D / 2 - 0.02);
-  scene.add(pane);
+  const dims = { rect: [2.2, 1.85], round: [2.0, 2.0], slit: [0.5, 3.4],
+    wide: [3.4, 1.5], tall: [1.6, 2.6], glass: [4.6, 3.6] }[shape] || [2.2, 1.85];
+  const [pw, ph] = dims;
+  if (shape === 'round') {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.09, 10, 28), frameM);
+    ring.position.set(winX, winY, -D / 2 + 0.05);
+    ring.castShadow = true;
+    scene.add(ring);
+    const pane = new THREE.Mesh(GEO.circle, paneMat);
+    pane.scale.setScalar(2.0);
+    pane.position.set(winX, winY, -D / 2 - 0.02);
+    scene.add(pane);
+    box(scene, 2.5, 0.14, 0.5, frameM, winX, winY - 1.15, -D / 2 + 0.12); // sill
+  } else {
+    box(scene, pw + 0.3, 0.18, 0.34, frameM, winX, winY + ph / 2 + 0.09, -D / 2 + 0.05);
+    box(scene, pw + 0.3, 0.18, 0.34, frameM, winX, winY - ph / 2 - 0.09, -D / 2 + 0.05);
+    box(scene, 0.18, ph + 0.18, 0.34, frameM, winX - pw / 2 - 0.09, winY, -D / 2 + 0.05);
+    box(scene, 0.18, ph + 0.18, 0.34, frameM, winX + pw / 2 + 0.09, winY, -D / 2 + 0.05);
+    if (shape === 'glass') {
+      // mullion grid echoing the glass front
+      for (const mx of [-pw / 4, 0, pw / 4])
+        box(scene, 0.1, ph, 0.3, frameM, winX + mx, winY, -D / 2 + 0.05);
+      box(scene, pw, 0.1, 0.3, frameM, winX, winY, -D / 2 + 0.05);
+    } else {
+      box(scene, 0.14, ph - 0.15, 0.3, frameM, winX, winY, -D / 2 + 0.05); // mullion
+      if (ph > 1.6) box(scene, pw - 0.15, 0.14, 0.3, frameM, winX, winY, -D / 2 + 0.05);
+    }
+    const pane = new THREE.Mesh(GEO.plane, paneMat);
+    pane.scale.set(pw, ph, 1);
+    pane.position.set(winX, winY, -D / 2 - 0.02);
+    scene.add(pane);
+    box(scene, pw + 0.7, 0.14, 0.5, frameM, winX, winY - ph / 2 - 0.22, -D / 2 + 0.12); // sill
+  }
 
   /* volumetric-feel shaft: additive gradient plane, window -> floor */
   const shaftMat = new THREE.MeshBasicMaterial({
@@ -1117,7 +1261,7 @@ function buildRoom(typeKey) {
     depthWrite: false, side: THREE.DoubleSide,
   });
   const shaft = new THREE.Mesh(GEO.plane, shaftMat);
-  shaft.scale.set(2.6, 5.2, 1);
+  shaft.scale.set({ rect: 2.6, round: 2.4, slit: 1.0, wide: 3.6, tall: 2.0, glass: 4.2 }[shape] || 2.6, 5.2, 1);
   shaft.position.set(winX, 1.55, -D / 2 + 1.7);
   shaft.rotation.x = -0.62;
   scene.add(shaft);
@@ -1156,6 +1300,78 @@ function buildRoom(typeKey) {
       lampPiece = g;
       shadeMat = g.userData.shadeMat || null;
     }
+  }
+
+  /* ---- second level (levels: 2): loft platform + staircase + railing ----
+     The platform hugs the BACK-LEFT so the back-wall window (x=1.0) stays
+     clear and the entry camera (front-right, high) sees both levels at once.
+     Stairs run along the left wall and land on the platform's front edge;
+     the front railing leaves a gap at the landing. Ground furniture was
+     re-laid for these types so no tall piece collides with the platform
+     (platform underside is at loft.y - 0.25). */
+  let loft = null;
+  if (spec.levels === 2 && spec.loft) {
+    const L = spec.loft;
+    const loftG = new THREE.Group();
+    const loftWood = stdMat('loftWood', { color: 0x8a6242, roughness: 0.65 });
+    const loftDark = stdMat('loftDark', { color: 0x5d4630, roughness: 0.7 });
+    const lw = L.x1 - L.x0, ld = L.z1 - L.z0;
+    const cx = (L.x0 + L.x1) / 2, cz = (L.z0 + L.z1) / 2;
+    box(loftG, lw, 0.25, ld, loftWood, cx, L.y - 0.125, cz); // slab, top at L.y
+    box(loftG, lw, 0.22, 0.22, loftDark, cx, L.y - 0.32, L.z1 - 0.11); // front beam
+    for (const px of [L.x0 + 0.15, L.x1 - 0.15]) // front posts (back edge is the wall)
+      box(loftG, 0.18, L.y - 0.4, 0.18, loftDark, px, (L.y - 0.4) / 2, L.z1 - 0.11);
+    // railing: front edge (gap at the stair landing) + open side edge
+    const railY = L.y + 0.45;
+    box(loftG, L.x1 - 0.1 - (-3.8), 0.08, 0.08, loftDark, (-3.8 + L.x1 - 0.1) / 2, L.y + 0.9, L.z1);
+    for (let x = -3.55; x < L.x1 - 0.35; x += 0.5)
+      box(loftG, 0.07, 0.9, 0.07, loftDark, x, railY, L.z1);
+    box(loftG, 0.08, 0.08, ld, loftDark, L.x1, L.y + 0.9, cz);
+    for (let z = L.z0 + 0.25; z < L.z1 - 0.1; z += 0.5)
+      box(loftG, 0.07, 0.9, 0.07, loftDark, L.x1, railY, z);
+    // staircase: 9 steps along the left wall, top step level with the platform
+    for (let i = 0; i < 9; i++)
+      box(loftG, 1.0, 0.3, 0.32, loftWood, -4.4, 0.15 + i * 0.3, 3.6 - i * 0.29);
+    loftG.userData.isLoft = true;
+    scene.add(loftG);
+    // loft furniture stands ON the platform (y = L.y)
+    const loftPieces = [];
+    for (const f of (spec.loftFurniture || [])) {
+      const builder = FURNITURE[f.p];
+      if (!builder) continue;
+      const g = builder(accent, tk, f.o || {}, rnd);
+      g.position.set(f.x, L.y, f.z);
+      g.rotation.y = f.r || 0;
+      scene.add(g);
+      loftPieces.push(f.p);
+    }
+    // loft window: small window on the back wall above the platform,
+    // sharing paneMat so its day/night tint follows automatically
+    if (spec.loftWindow) {
+      const lw2 = spec.loftWindow, lShape = lw2.shape || 'rect';
+      const lDims = { rect: [1.2, 1.2], round: [1.1, 1.1], slit: [0.5, 1.5] }[lShape] || [1.2, 1.2];
+      const [lpw, lph] = lDims;
+      if (lShape === 'round') {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.07, 10, 24), frameM);
+        ring.position.set(lw2.x, lw2.y, -D / 2 + 0.05);
+        ring.castShadow = true;
+        scene.add(ring);
+        const lp = new THREE.Mesh(GEO.circle, paneMat);
+        lp.scale.setScalar(1.1);
+        lp.position.set(lw2.x, lw2.y, -D / 2 - 0.02);
+        scene.add(lp);
+      } else {
+        box(scene, lpw + 0.24, 0.14, 0.3, frameM, lw2.x, lw2.y + lph / 2 + 0.07, -D / 2 + 0.05);
+        box(scene, lpw + 0.24, 0.14, 0.3, frameM, lw2.x, lw2.y - lph / 2 - 0.07, -D / 2 + 0.05);
+        box(scene, 0.14, lph + 0.14, 0.3, frameM, lw2.x - lpw / 2 - 0.07, lw2.y, -D / 2 + 0.05);
+        box(scene, 0.14, lph + 0.14, 0.3, frameM, lw2.x + lpw / 2 + 0.07, lw2.y, -D / 2 + 0.05);
+        const lp = new THREE.Mesh(GEO.plane, paneMat);
+        lp.scale.set(lpw, lph, 1);
+        lp.position.set(lw2.x, lw2.y, -D / 2 - 0.02);
+        scene.add(lp);
+      }
+    }
+    loft = { group: loftG, y: L.y, pieces: loftPieces };
   }
 
   /* ---- the room's ONE point light, riding the first lamp piece ---- */
@@ -1200,7 +1416,7 @@ function buildRoom(typeKey) {
   const rig = new BlobRig({ fruit: type.fruit });
   rig.group.position.set(spec.rug.x, 0, spec.rug.z); // rug center
   // face the room camera's start position
-  rig.setFacing(Math.atan2(KNOBS.camPos[0] - spec.rug.x, KNOBS.camPos[2] - spec.rug.z));
+  rig.setFacing(Math.atan2(camPosV[0] - spec.rug.x, camPosV[2] - spec.rug.z));
   rig.setState('idle');
   scene.add(rig.group);
 
@@ -1225,8 +1441,8 @@ function buildRoom(typeKey) {
     1, // fixed on enter() from renderer size
     0.1, 60
   );
-  const target = new THREE.Vector3(...KNOBS.camTarget);
-  const basePos = new THREE.Vector3(...KNOBS.camPos);
+  const target = new THREE.Vector3(...camTargetV);
+  const basePos = new THREE.Vector3(...camPosV);
   const off = basePos.clone().sub(target);
   const baseYaw = Math.atan2(off.x, off.z);
   const baseR = off.length();
@@ -1235,7 +1451,8 @@ function buildRoom(typeKey) {
   camera.lookAt(target);
 
   const room = {
-    typeKey, type, accent, scene, camera, target,
+    typeKey, type, accent, scene, camera, target, camPos: basePos,
+    levels: spec.levels || 1, loft,
     baseYaw, baseR, basePitch,
     yaw: baseYaw, pitch: basePitch,           // orbit goals (damped toward)
     rig, key, hemi, lampLight, shadeMat, paneMat, shaftMat, dust,
@@ -1298,7 +1515,7 @@ function _enter(typeKey, api, onExit) {
 
   /* ---- resident reset: always present, hero framing (rug center per spec) ---- */
   room.rig.group.position.set(room.rugPos[0], 0, room.rugPos[1]);
-  room.rig.setFacing(Math.atan2(KNOBS.camPos[0] - room.rugPos[0], KNOBS.camPos[2] - room.rugPos[1]));
+  room.rig.setFacing(Math.atan2(room.camPos.x - room.rugPos[0], room.camPos.z - room.rugPos[1]));
   room.rig.setState('idle');
   room.yaw = room.baseYaw; room.pitch = room.basePitch;
   room.wpIdx = 0; room.moving = false; room.wpTarget = null;
@@ -1311,7 +1528,7 @@ function _enter(typeKey, api, onExit) {
   btn.textContent = '\u2190 Back to city';
   btn.setAttribute('aria-label', 'Back to city');
   Object.assign(btn.style, {
-    position: 'fixed', top: '14px', left: '14px', zIndex: '30',
+    position: 'fixed', top: '14px', left: '14px', zIndex: '80',
     padding: '10px 18px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.25)',
     background: 'rgba(18,18,24,0.55)', color: '#fff',
     fontSize: '15px', fontWeight: '600', fontFamily: 'inherit',
@@ -1543,8 +1760,18 @@ export const Room3D = {
   /** Structural info for the ?selftest=1 audit (no rendering). */
   specInfo() {
     const specs = {};
-    for (const [k, s] of Object.entries(ROOM_SPECS)) specs[k] = s.furniture.map((f) => f.p);
-    return { specKeys: Object.keys(ROOM_SPECS), furnitureKeys: Object.keys(FURNITURE), specs };
+    const architecture = {};
+    for (const [k, s] of Object.entries(ROOM_SPECS)) {
+      specs[k] = s.furniture.map((f) => f.p);
+      architecture[k] = {
+        levels: s.levels || 1,
+        windowShape: s.windowShape || 'rect',
+        wallStyle: s.wallStyle || 'plain',
+        hasLoft: !!(s.levels === 2 && s.loft),
+        loftPieces: (s.loftFurniture || []).map((f) => f.p),
+      };
+    }
+    return { specKeys: Object.keys(ROOM_SPECS), furnitureKeys: Object.keys(FURNITURE), specs, architecture };
   },
   getResident() { return active ? active.room.rig : null; },
   /* project the resident's head to client coords (for 3D-anchored DOM hints) */
