@@ -216,6 +216,21 @@ html,body{height:100%;overflow:hidden;background:#0d0a08;
   display:none;background:rgba(120,20,20,.92);color:#fff;font-size:12px;line-height:1.45;
   padding:10px 12px;border-radius:10px;word-break:break-word}
 
+/* ---------- day/night hold banner (NOT the error toast) ---------- */
+/* Own row below the top bar — it can never cover the city pills, and in
+   rooms it sits below the Back button (z-80). Tapping it releases the hold.
+   While the directory panel (which shares this row) is open, main.js hides
+   the banner entirely rather than covering the panel's header/search. */
+#holdBanner{position:fixed;left:50%;top:calc(64px + env(safe-area-inset-top));
+  transform:translateX(-50%);z-index:25;display:none;align-items:center;gap:8px;
+  padding:10px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.28);
+  background:rgba(18,18,24,.72);color:#fff;font-size:14px;font-weight:600;
+  font-family:inherit;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  max-width:calc(100vw - 24px);white-space:nowrap}
+#holdBanner.show{display:flex}
+#holdBanner.mini{padding:7px 12px;font-size:12px;opacity:.9}
+
 @media (max-width:380px){
   .hint{display:none}
   .masthead{display:none}
