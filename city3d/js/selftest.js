@@ -230,6 +230,27 @@ export async function runSelfTest(ctx) {
     const lv2 = TYPES.filter((t) => arch[t.key] && arch[t.key].levels === 2).map((t) => t.key).join(',');
     return { status: ok ? 'PASS' : 'FAIL', value: ok ? `2-level: [${lv2}], all windows/walls in vocabulary` : `PROBLEMS: ${problems.join(' ')}` };
   });
+  await check('room_lighting', async () => {
+    // 2026-10-25 night-darkness fix: every interior must stay readable at
+    // night — ambient floor high enough, a real lamp strong enough, and a
+    // loft light wherever there is a second level. Static spec data, but
+    // it is the same data buildRoom consumes for its lights.
+    if (!Room3D.specInfo) return { status: 'FAIL', value: 'Room3D.specInfo missing' };
+    const info = Room3D.specInfo();
+    const lighting = info.lighting || {};
+    const problems = [];
+    for (const t of TYPES) {
+      const L = lighting[t.key];
+      if (!L) { problems.push(`${t.key}:no-lighting`); continue; }
+      if (L.nightHemiI < 0.40) problems.push(`${t.key}:hemi=${L.nightHemiI}`);
+      if (L.lampNightI < 24) problems.push(`${t.key}:lamp=${L.lampNightI}`);
+      if (L.nightKeyI < 0.12) problems.push(`${t.key}:key=${L.nightKeyI}`);
+      if ((info.architecture[t.key] || {}).levels === 2 && !L.hasLoftLight)
+        problems.push(`${t.key}:no-loft-light`);
+    }
+    const ok = problems.length === 0;
+    return { status: ok ? 'PASS' : 'FAIL', value: ok ? 'hemi>=0.40, lamp>=24, key>=0.12, loft lights on all 2-level rooms' : `PROBLEMS: ${problems.join(' ')}` };
+  });
   await check('daynight_samples', async () => {
     const probe = createDayNight();
     const vals = {};
