@@ -197,6 +197,39 @@ export async function runSelfTest(ctx) {
     const ok = missing.length === 0 && unknown.length === 0;
     return { status: ok ? 'PASS' : 'FAIL', value: `${info.specKeys.length} specs (16 types + fallback), ${info.furnitureKeys.length} furniture pieces${missing.length ? `, MISSING: ${missing.join(',')}` : ''}${unknown.length ? `, UNKNOWN: ${unknown.join(',')}` : ''}` };
   });
+  await check('room_architecture', async () => {
+    // 2026-10-25 coherence pass: interiors must derive from exteriors.
+    // Two-story exteriors (infj tower, intj monolith, entj glass box) must
+    // have a loft + staircase + loft furniture; every type's window shape
+    // and wall style must come from the allowed vocabularies. Static spec
+    // data, but it is the same spec buildRoom consumes — a missing loft
+    // here means the room the user steps into has no second level.
+    if (!Room3D.specInfo) return { status: 'FAIL', value: 'Room3D.specInfo missing' };
+    const info = Room3D.specInfo();
+    const arch = info.architecture || {};
+    const problems = [];
+    const twoStory = ['infj', 'intj', 'entj'];
+    const winShapes = ['rect', 'round', 'slit', 'wide', 'tall', 'glass'];
+    const wallStyles = ['plain', 'logs', 'planks', 'brick'];
+    for (const t of TYPES) {
+      const a = arch[t.key];
+      if (!a) { problems.push(`${t.key}:no-arch`); continue; }
+      if (a.levels !== 1 && a.levels !== 2) problems.push(`${t.key}:levels=${a.levels}`);
+      if (!winShapes.includes(a.windowShape)) problems.push(`${t.key}:win=${a.windowShape}`);
+      if (!wallStyles.includes(a.wallStyle)) problems.push(`${t.key}:wall=${a.wallStyle}`);
+      if (twoStory.includes(t.key)) {
+        if (a.levels !== 2 || !a.hasLoft) problems.push(`${t.key}:no-loft`);
+        if (!a.loftPieces || a.loftPieces.length === 0) problems.push(`${t.key}:loft-empty`);
+        for (const lp of (a.loftPieces || []))
+          if (!info.furnitureKeys.includes(lp)) problems.push(`${t.key}:loft-unknown:${lp}`);
+      } else if (a.levels === 2) {
+        problems.push(`${t.key}:unexpected-2-level`);
+      }
+    }
+    const ok = problems.length === 0;
+    const lv2 = TYPES.filter((t) => arch[t.key] && arch[t.key].levels === 2).map((t) => t.key).join(',');
+    return { status: ok ? 'PASS' : 'FAIL', value: ok ? `2-level: [${lv2}], all windows/walls in vocabulary` : `PROBLEMS: ${problems.join(' ')}` };
+  });
   await check('daynight_samples', async () => {
     const probe = createDayNight();
     const vals = {};
