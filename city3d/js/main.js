@@ -15,7 +15,7 @@ import { TYPES, typeByKey } from './types.js?v=3';
 import { BlobRig, updatePuffs, spawnPuff } from './blobRig.js?v=2';
 import { createDayNight } from './daynight.js?v=2';
 import { buildHouseExterior } from './houses.js?v=3';
-import { Room3D } from './room3d.js?v=6';
+import { Room3D } from './room3d.js?v=7';
 import { buildFountain } from './fountain.js?v=4';
 import { grassTexture, cobbleTexture, buildLandscaping } from './landscaping.js?v=1';
 
@@ -1343,7 +1343,7 @@ try {
 if (SELFTEST) {
   setTimeout(async () => {
     try {
-      const { runSelfTest } = await import('./selftest.js?v=3');
+      const { runSelfTest } = await import('./selftest.js?v=4');
       await runSelfTest({
         renderer, composer, renderPass, scene, camera,
         houses, residents, fountain, dn, TYPES, Room3D,
